@@ -3,6 +3,7 @@ const { Markup } = require('telegraf');
 const mainMenu = Markup.keyboard([
   ['🤖 Bot yaratish', '📂 Mening botlarim'],
   ['👥 Referallar', '📊 Profil'],
+  ['🪙 Koinlarim', '🏆 Auksion'],
   ['⚙️ Sozlamalar', '🆘 Yordam'],
 ]).resize();
 
@@ -10,6 +11,8 @@ const adminMenu = Markup.keyboard([
   ['👥 Foydalanuvchilar', '🤖 Botlar'],
   ['📢 Kanallar', '🔗 Referallar'],
   ['📤 Broadcast', '📊 Statistika'],
+  ['🧩 Shablon yuklash', '⚙️ Referal sozlamalari'],
+  ['🏆 Auksion yaratish', '🪙 Koin sozlamalari'],
   ['📜 Loglar', '⬅️ Asosiy menyu'],
 ]).resize();
 
@@ -25,15 +28,32 @@ function confirmInline(yesData, noData) {
   ]);
 }
 
-function templateSelectionInline() {
+// templates - {key, name, description}[] massivi, templates.js dagi getTemplateList() natijasi.
+// Har doim shu ro'yxatdan tugmalar quriladi, shuning uchun admin yuklagan yangi
+// (custom) shablonlar ham avtomatik ravishda bot yaratish menyusiga qo'shiladi.
+function templateSelectionInline(templates = []) {
+  const rows = templates.map((t) => [Markup.button.callback(`📦 ${t.name}`, `tpl_${t.key}`)]);
+  return Markup.inlineKeyboard(
+    rows.length ? rows : [[Markup.button.callback('⬜ Blank', 'tpl_blank')]]
+  );
+}
+
+function referralShareInline(link, shareText) {
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText || '')}`;
+  return Markup.inlineKeyboard([[Markup.button.url('📤 Ulashish', shareUrl)]]);
+}
+
+function auctionListInline(auctions) {
+  const rows = auctions.map((a) => [
+    Markup.button.callback(`🏆 ${a.title} (band: ${a.currentBid})`, `auction_view_${a._id}`),
+  ]);
+  return Markup.inlineKeyboard(rows.length ? rows : [[Markup.button.callback('Auksion yo\'q', 'noop')]]);
+}
+
+function auctionDetailInline(auctionId) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('⬜ Blank', 'tpl_blank')],
-    [Markup.button.callback('🔒 Majburiy obuna', 'tpl_subscription')],
-    [Markup.button.callback('🤖 Auto Reply', 'tpl_autoreply')],
-    [Markup.button.callback('↪️ Auto Forward', 'tpl_autoforward')],
-    [Markup.button.callback('🛒 Shop', 'tpl_shop')],
-    [Markup.button.callback('🎟 Lottery', 'tpl_lottery')],
-    [Markup.button.callback('🆘 Support', 'tpl_support')],
+    [Markup.button.callback('💰 Stavka qo\'yish', `auction_bid_${auctionId}`)],
+    [Markup.button.callback('⬅️ Ro\'yxatga qaytish', 'auction_back')],
   ]);
 }
 
@@ -79,6 +99,9 @@ module.exports = {
   backKeyboard,
   confirmInline,
   templateSelectionInline,
+  referralShareInline,
+  auctionListInline,
+  auctionDetailInline,
   subscriptionCheckInline,
   botListInline,
   botManageInline,
