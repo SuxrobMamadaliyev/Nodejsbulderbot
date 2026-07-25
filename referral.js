@@ -1,7 +1,7 @@
 const { User, Referral } = require('./database');
 const { buildReferralLink } = require('./functions');
-const { getReferralRequired, getBotsPerReferralBatch } = require('./settings');
-const { grantFreeBotCredit } = require('./users');
+const { getReferralRequired, getBotsPerReferralBatch, getCoinsPerReferral } = require('./settings');
+const { grantFreeBotCredit, addCoins } = require('./users');
 const logger = require('./logger');
 
 /**
@@ -28,6 +28,13 @@ async function registerReferral(referrerCode, newUser) {
   newUser.referredBy = referrer.telegramId;
   await Promise.all([referrer.save(), newUser.save()]);
 
+  // Har bir referal uchun koin beriladi - koinlar auksionda ishtirok etish
+  // yoki to'g'ridan-to'g'ri bot sotib olish uchun ishlatiladi.
+  const coinsPerReferral = await getCoinsPerReferral();
+  if (coinsPerReferral > 0) {
+    await addCoins(referrer.telegramId, coinsPerReferral);
+  }
+
   const required = await getReferralRequired();
   let creditGranted = false;
   if (required > 0 && referrer.referralsCount % required === 0) {
@@ -37,11 +44,11 @@ async function registerReferral(referrerCode, newUser) {
   }
 
   logger.info(
-    { referrer: referrer.telegramId, referred: newUser.telegramId },
+    { referrer: referrer.telegramId, referred: newUser.telegramId, coinsPerReferral },
     'Referal muvaffaqiyatli hisoblandi'
   );
 
-  return { counted: true, referrer, creditGranted };
+  return { counted: true, referrer, creditGranted, coinsGranted: coinsPerReferral };
 }
 
 async function getReferralInfo(telegramId, botUsername) {
@@ -50,10 +57,13 @@ async function getReferralInfo(telegramId, botUsername) {
   const required = await getReferralRequired();
   const remainder = required > 0 ? user.referralsCount % required : 0;
   const remaining = required > 0 ? required - remainder : 0;
+  const coinsPerReferral = await getCoinsPerReferral();
   return {
     link: buildReferralLink(botUsername, user.referralCode),
     referralsCount: user.referralsCount,
     freeBotCredits: user.freeBotCredits,
+    coins: user.coins,
+    coinsPerReferral,
     required,
     remaining: remaining === required ? 0 : remaining,
   };
