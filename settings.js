@@ -35,10 +35,32 @@ async function getBotsPerReferralBatch() {
   return Number(value) || 1;
 }
 
+async function getCoinsPerReferral() {
+  const value = await getSetting('coins_per_referral', config.defaultCoinsPerReferral);
+  return Number(value) || config.defaultCoinsPerReferral;
+}
+
+async function setCoinsPerReferral(amount) {
+  return setSetting('coins_per_referral', Number(amount));
+}
+
+async function getBotPriceCoins() {
+  const value = await getSetting('bot_price_coins', config.defaultBotPriceCoins);
+  return Number(value) || config.defaultBotPriceCoins;
+}
+
+async function setBotPriceCoins(amount) {
+  return setSetting('bot_price_coins', Number(amount));
+}
+
 module.exports = {
   getSetting,
   setSetting,
   getReferralRequired,
   setReferralRequired,
   getBotsPerReferralBatch,
+  getCoinsPerReferral,
+  setCoinsPerReferral,
+  getBotPriceCoins,
+  setBotPriceCoins,
 };
