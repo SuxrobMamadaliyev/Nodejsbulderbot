@@ -29,6 +29,8 @@ const config = {
   floodLimitWindowMs: parseInt(process.env.FLOOD_LIMIT_WINDOW_MS || '3000', 10),
 
   defaultReferralRequired: parseInt(process.env.DEFAULT_REFERRAL_REQUIRED || '20', 10),
+  defaultCoinsPerReferral: parseInt(process.env.DEFAULT_COINS_PER_REFERRAL || '10', 10),
+  defaultBotPriceCoins: parseInt(process.env.DEFAULT_BOT_PRICE_COINS || '100', 10),
 
   logLevel: process.env.LOG_LEVEL || 'info',
 };
