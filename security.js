@@ -2,17 +2,34 @@ const crypto = require('crypto');
 const config = require('./config');
 const logger = require('./logger');
 
+// redisClient - ikkita rejimni qo'llab-quvvatlaydi:
+// 1) oddiy redis:// ulanish (ioredis)
+// 2) Upstash REST API (@upstash/redis) - agar faqat REST_URL/REST_TOKEN berilgan bo'lsa
 let redisClient = null;
+let redisMode = null; // 'ioredis' | 'upstash-rest' | null
+
 if (config.redisUrl) {
   try {
     const Redis = require('ioredis');
-    redisClient = new Redis(config.redisUrl, { maxRetriesPerRequest: 2, lazyConnect: true });
-    redisClient.connect().catch((err) => {
+    const client = new Redis(config.redisUrl, { maxRetriesPerRequest: 2, lazyConnect: true });
+    client.connect().catch((err) => {
       logger.warn({ err: err.message }, 'Redisga ulanib bo\'lmadi, xotira rejimiga o\'tildi');
       redisClient = null;
     });
+    redisClient = client;
+    redisMode = 'ioredis';
   } catch (err) {
     logger.warn('ioredis topilmadi, xotira rejimida ishlaydi');
+    redisClient = null;
+  }
+} else if (config.upstashRestUrl && config.upstashRestToken) {
+  try {
+    const { Redis: UpstashRedis } = require('@upstash/redis');
+    redisClient = new UpstashRedis({ url: config.upstashRestUrl, token: config.upstashRestToken });
+    redisMode = 'upstash-rest';
+    logger.info('Upstash REST Redis ulandi');
+  } catch (err) {
+    logger.warn('@upstash/redis topilmadi, xotira rejimida ishlaydi');
     redisClient = null;
   }
 }
@@ -50,13 +67,27 @@ function cleanupMemoryEntry(key, windowMs) {
 }
 
 async function incrCounter(key, windowMs) {
-  if (redisClient && redisClient.status === 'ready') {
+  if (redisClient && redisMode === 'ioredis' && redisClient.status === 'ready') {
     const count = await redisClient.incr(key);
     if (count === 1) {
       await redisClient.pexpire(key, windowMs);
     }
     return count;
   }
+
+  if (redisClient && redisMode === 'upstash-rest') {
+    try {
+      const count = await redisClient.incr(key);
+      if (count === 1) {
+        await redisClient.pexpire(key, windowMs);
+      }
+      return count;
+    } catch (err) {
+      logger.warn({ err: err.message }, 'Upstash REST xatolik, xotira rejimiga o\'tildi');
+      // pastdagi xotira fallback'iga o'tadi
+    }
+  }
+
   const now = Date.now();
   const entry = memoryStore.get(key);
   if (!entry || now - entry.start > windowMs) {
