@@ -3,13 +3,24 @@ const { setState, getState, updateStateData, clearState } = require('./states');
 const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline } = require('./buttons');
 const { getUsersPaginated, searchUser, blockUser, unblockUser } = require('./users');
 const { addChannel, removeChannel, listChannels, resolveChannelChatId } = require('./subscription');
-const { getReferralRequired, setReferralRequired } = require('./settings');
+const {
+  getReferralRequired,
+  setReferralRequired,
+  getCoinsPerReferral,
+  setCoinsPerReferral,
+  getBotPriceCoins,
+  setBotPriceCoins,
+} = require('./settings');
 const { getOverallStatistics, formatOverallStatistics } = require('./statistics');
 const { buildPayloadFromMessage, runBroadcast } = require('./broadcast');
 const { startBot, stopBot, restartBot, deleteBot, getBotInfo } = require('./botmanager');
 const { isValidChannelInput, sanitizeText } = require('./security');
 const { formatDate } = require('./functions');
+const { registerCustomTemplateFromCode, getTemplateList } = require('./templates');
+const { createAuction, cancelAuction, getActiveAuctions } = require('./auction');
 const logger = require('./logger');
+
+const MAX_TEMPLATE_FILE_SIZE = 512 * 1024; // 512 KB
 
 const SCOPE = 'admin';
 
@@ -192,6 +203,202 @@ async function handleReferralCountInput(ctx) {
   await ctx.reply(`✅ Referal talabi yangilandi: ${num} ta referal = 1 ta bot.`, adminMenu);
 }
 
+// ===================== KOIN SOZLAMALARI =====================
+
+async function showCoinSettings(ctx) {
+  const coinsPerReferral = await getCoinsPerReferral();
+  const botPrice = await getBotPriceCoins();
+  setState(SCOPE, ctx.from.id, 'awaiting_coins_per_referral', {});
+  await ctx.reply(
+    `🪙 Koin sozlamalari\n\n` +
+      `Hozirgi: 1 referal = ${coinsPerReferral} koin\n` +
+      `Bot narxi: ${botPrice} koin\n\n` +
+      `Yangi "1 referal uchun koin" qiymatini kiriting (faqat raqam):`,
+    cancelKeyboard
+  );
+}
+
+async function handleCoinsPerReferralInput(ctx) {
+  const text = sanitizeText(ctx.message.text || '');
+  const num = parseInt(text, 10);
+  if (Number.isNaN(num) || num < 0) {
+    return ctx.reply('❌ Noto\'g\'ri qiymat. 0 yoki musbat raqam kiriting.');
+  }
+  await setCoinsPerReferral(num);
+  setState(SCOPE, ctx.from.id, 'awaiting_bot_price_coins', {});
+  await ctx.reply(`✅ Har bir referal uchun endi ${num} koin beriladi.\n\nEndi bot narxini (koinda) kiriting:`);
+}
+
+async function handleBotPriceCoinsInput(ctx) {
+  const text = sanitizeText(ctx.message.text || '');
+  const num = parseInt(text, 10);
+  if (Number.isNaN(num) || num < 1) {
+    return ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
+  }
+  await setBotPriceCoins(num);
+  clearState(SCOPE, ctx.from.id);
+  await ctx.reply(`✅ Bot narxi yangilandi: ${num} koin.`, adminMenu);
+}
+
+// ===================== AUKSION YARATISH (ADMIN) =====================
+// Bosqichlar: sarlavha -> tavsif -> minimal stavka -> bonus (pot) koin -> davomiylik (daqiqa)
+
+async function startAuctionCreation(ctx) {
+  setState(SCOPE, ctx.from.id, 'awaiting_auction_title', {});
+  await ctx.reply('🏆 Yangi koin auksioni yaratish\n\nAuksion sarlavhasini kiriting:', cancelKeyboard);
+}
+
+async function handleAuctionCreationInput(ctx) {
+  const state = getState(SCOPE, ctx.from.id);
+  if (!state) return false;
+  const text = sanitizeText(ctx.message.text || '');
+
+  switch (state.step) {
+    case 'awaiting_auction_title': {
+      if (!text || text.length > 128) {
+        await ctx.reply('❌ Sarlavha 1-128 belgidan iborat bo\'lishi kerak.');
+        return true;
+      }
+      updateStateData(SCOPE, ctx.from.id, { title: text });
+      setState(SCOPE, ctx.from.id, 'awaiting_auction_description');
+      await ctx.reply('📝 Auksion tavsifini kiriting (yoki "-" tavsifsiz qoldirish uchun):');
+      return true;
+    }
+    case 'awaiting_auction_description': {
+      updateStateData(SCOPE, ctx.from.id, { description: text === '-' ? '' : text });
+      setState(SCOPE, ctx.from.id, 'awaiting_auction_min_bid');
+      await ctx.reply('🪙 Minimal stavka miqdorini kiriting (koinda, faqat raqam):');
+      return true;
+    }
+    case 'awaiting_auction_min_bid': {
+      const minBid = parseInt(text, 10);
+      if (Number.isNaN(minBid) || minBid < 1) {
+        await ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
+        return true;
+      }
+      updateStateData(SCOPE, ctx.from.id, { minBid });
+      setState(SCOPE, ctx.from.id, 'awaiting_auction_pot');
+      await ctx.reply("🎁 G'olibga beriladigan bonus koin miqdorini kiriting:");
+      return true;
+    }
+    case 'awaiting_auction_pot': {
+      const potCoins = parseInt(text, 10);
+      if (Number.isNaN(potCoins) || potCoins < 1) {
+        await ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
+        return true;
+      }
+      updateStateData(SCOPE, ctx.from.id, { potCoins });
+      setState(SCOPE, ctx.from.id, 'awaiting_auction_duration');
+      await ctx.reply('⏱ Auksion necha daqiqa davom etsin?');
+      return true;
+    }
+    case 'awaiting_auction_duration': {
+      const durationMinutes = parseInt(text, 10);
+      if (Number.isNaN(durationMinutes) || durationMinutes < 1) {
+        await ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
+        return true;
+      }
+      const data = getState(SCOPE, ctx.from.id).data;
+      try {
+        const auction = await createAuction({
+          title: data.title,
+          description: data.description,
+          minBid: data.minBid,
+          potCoins: data.potCoins,
+          durationMinutes,
+          createdBy: ctx.from.id,
+        });
+        clearState(SCOPE, ctx.from.id);
+        await ctx.reply(
+          `✅ Auksion yaratildi!\n\n` +
+            `🏆 ${auction.title}\n` +
+            `🪙 Minimal stavka: ${auction.minBid}\n` +
+            `🎁 Bonus: ${auction.potCoins} koin\n` +
+            `⏱ Tugash vaqti: ${formatDate(auction.endsAt)}\n\n` +
+            `Foydalanuvchilar "🏆 Auksion" bo'limidan ishtirok etishlari mumkin.`,
+          adminMenu
+        );
+      } catch (err) {
+        logger.error({ err: err.message }, 'Auksion yaratishda xatolik');
+        clearState(SCOPE, ctx.from.id);
+        await ctx.reply('❌ Auksion yaratishda xatolik yuz berdi: ' + err.message, adminMenu);
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// ===================== MAXSUS SHABLON YUKLASH =====================
+// Admin tayyor .js kod faylini yuborsa, u tekshirilib, shablonlar ro'yxatiga
+// (va shu orqali "Bot yaratish -> Shablon tanlash" botlar qatoriga) qo'shiladi.
+
+async function showTemplateUploadPrompt(ctx) {
+  const templates = getTemplateList();
+  const lines = templates.map((t) => `• ${t.name} (${t.key})`);
+  setState(SCOPE, ctx.from.id, 'awaiting_template_file', {});
+  await ctx.reply(
+    `🧩 Maxsus shablon yuklash\n\n` +
+      `Hozirgi shablonlar:\n${lines.join('\n')}\n\n` +
+      `Yangi shablon qo'shish uchun .js fayl yuboring. Fayl quyidagi ko'rinishda bo'lishi kerak:\n\n` +
+      '```\n' +
+      "module.exports = {\n" +
+      "  name: 'Mening shablonim',\n" +
+      "  description: 'Qisqacha tavsif',\n" +
+      "  register(bot, botDoc) {\n" +
+      "    bot.start((ctx) => ctx.reply('Salom!'));\n" +
+      "  },\n" +
+      "};\n" +
+      '```\n\n' +
+      "Fayl muvaffaqiyatli tekshirilsa, u avtomatik ravishda botlar qatoriga (shablonlar ro'yxatiga) qo'shiladi.",
+    cancelKeyboard
+  );
+}
+
+async function handleTemplateFileUpload(ctx) {
+  const doc = ctx.message.document;
+  if (!doc) {
+    return ctx.reply('❌ Iltimos, .js fayl yuboring.');
+  }
+  if (!/\.js$/i.test(doc.file_name || '')) {
+    return ctx.reply('❌ Fayl kengaytmasi .js bo\'lishi kerak.');
+  }
+  if (doc.file_size && doc.file_size > MAX_TEMPLATE_FILE_SIZE) {
+    return ctx.reply('❌ Fayl hajmi juda katta (maksimal 512 KB).');
+  }
+
+  try {
+    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+    const axios = require('axios');
+    const response = await axios.get(fileLink.href, { responseType: 'text', transformResponse: (d) => d });
+    const code = response.data;
+
+    const key = (doc.file_name || `custom_${Date.now()}`).replace(/\.js$/i, '');
+    const result = await registerCustomTemplateFromCode({
+      key,
+      code,
+      fileName: doc.file_name,
+      addedBy: ctx.from.id,
+    });
+
+    clearState(SCOPE, ctx.from.id);
+    await ctx.reply(
+      `✅ Shablon muvaffaqiyatli qo'shildi!\n\n` +
+        `📦 Nomi: ${result.name}\n` +
+        `🔑 Kaliti: ${result.key}\n\n` +
+        `Endi foydalanuvchilar "🤖 Bot yaratish" bo'limida bu shablonni tanlashi mumkin.`,
+      adminMenu
+    );
+  } catch (err) {
+    logger.error({ err: err.message }, 'Shablon yuklashda xatolik');
+    await ctx.reply(
+      `❌ Shablonni yuklab bo'lmadi: ${err.message}\n\nFayl formatini tekshirib, qaytadan yuboring yoki bekor qiling.`,
+      cancelKeyboard
+    );
+  }
+}
+
 // ===================== LOGLAR =====================
 
 async function showRecentLogs(ctx) {
@@ -241,6 +448,13 @@ module.exports = {
   executeBroadcast,
   showAdminSettings,
   handleReferralCountInput,
+  showCoinSettings,
+  handleCoinsPerReferralInput,
+  handleBotPriceCoinsInput,
+  startAuctionCreation,
+  handleAuctionCreationInput,
+  showTemplateUploadPrompt,
+  handleTemplateFileUpload,
   showRecentLogs,
   handleBotAction,
   SCOPE,
