@@ -16,6 +16,8 @@ const config = {
   mongodbUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/botbuilder',
 
   redisUrl: process.env.REDIS_URL || '',
+  upstashRestUrl: process.env.UPSTASH_REDIS_REST_URL || '',
+  upstashRestToken: process.env.UPSTASH_REDIS_REST_TOKEN || '',
 
   superAdminIds: parseIds(process.env.SUPER_ADMIN_IDS),
 
