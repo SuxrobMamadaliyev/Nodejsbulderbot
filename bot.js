@@ -2,13 +2,16 @@ const { Telegraf } = require('telegraf');
 const config = require('./config');
 const logger = require('./logger');
 
-const { mainMenu, adminMenu, botListInline, botManageInline } = require('./buttons');
-const { findOrCreateUser } = require('./users');
+const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline } = require('./buttons');
+const { getTemplateList } = require('./templates');
+const { findOrCreateUser, getCoins } = require('./users');
 const { extractReferralCode } = require('./functions');
 const { registerReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
 const { getOverallStatistics, formatOverallStatistics, incrementDailyStat } = require('./statistics');
+const { getBotPriceCoins } = require('./settings');
+const { getActiveAuctions, getAuctionById, placeBid } = require('./auction');
 const { Bot } = require('./database');
 
 const {
@@ -150,13 +153,84 @@ bot.hears('👥 Referallar', async (ctx) => {
       `👤 Jami referallar: ${info.referralsCount}\n` +
       `🎯 Talab qilinadigan referal: ${info.required}\n` +
       `⏳ Keyingi bot uchun qoldi: ${info.remaining || info.required}\n` +
-      `🎁 Bepul bot kreditlari: ${info.freeBotCredits}`
+      `🎁 Bepul bot kreditlari: ${info.freeBotCredits}`,
+    referralShareInline(info.link, '🤖 Bepul Telegram bot yaratish uchun shu havoladan foydalaning!')
   );
 });
 
 bot.hears('📊 Profil', async (ctx) => {
   const text = await renderProfile(ctx.from.id);
   await ctx.reply(text);
+});
+
+// ===================== KOIN =====================
+
+bot.hears('🪙 Koinlarim', async (ctx) => {
+  const coins = await getCoins(ctx.from.id);
+  const botPrice = await getBotPriceCoins();
+  const me = await ctx.telegram.getMe();
+  const info = await getReferralInfo(ctx.from.id, me.username);
+  await ctx.reply(
+    `🪙 Koin balansingiz: ${coins}\n\n` +
+      `👥 Har bir referal uchun: ${info ? info.coinsPerReferral : '-'} koin olasiz.\n` +
+      `🤖 Bot narxi: ${botPrice} koin (bot yaratishda referal krediti bo'lmasa, koin bilan sotib olishingiz mumkin).\n` +
+      `🏆 Koiningizni ko'paytirish uchun "🏆 Auksion" bo'limiga o'ting!`,
+    info ? referralShareInline(info.link, '🪙 Koin yig\'ish uchun shu havoladan foydalaning!') : undefined
+  );
+});
+
+// ===================== AUKSION =====================
+
+bot.hears('🏆 Auksion', async (ctx) => {
+  const auctions = await getActiveAuctions();
+  if (!auctions.length) {
+    return ctx.reply('🏆 Hozircha faol auksionlar mavjud emas.');
+  }
+  await ctx.reply(`🏆 Faol auksionlar (${auctions.length}):`, auctionListInline(auctions));
+});
+
+async function renderAuctionDetail(auction) {
+  const msLeft = auction.endsAt.getTime() - Date.now();
+  const minutesLeft = Math.max(0, Math.ceil(msLeft / 60000));
+  return (
+    `🏆 ${auction.title}\n` +
+    `${auction.description ? `📝 ${auction.description}\n` : ''}` +
+    `🪙 Joriy stavka: ${auction.currentBid || auction.minBid}\n` +
+    `🎁 G'olibga bonus: +${auction.potCoins} koin\n` +
+    `⏱ Tugashiga: ${minutesLeft} daqiqa\n\n` +
+    `Kimda eng yuqori stavka bo'lsa, auksion tugaganda o'z stavkasi + bonusni oladi!`
+  );
+}
+
+bot.action(/auction_view_(.+)/, async (ctx) => {
+  const auction = await getAuctionById(ctx.match[1]);
+  if (!auction) return ctx.answerCbQuery('Auksion topilmadi', { show_alert: true });
+  await ctx.answerCbQuery();
+  await ctx.editMessageText(await renderAuctionDetail(auction), auctionDetailInline(auction._id.toString()));
+});
+
+bot.action('auction_back', async (ctx) => {
+  const auctions = await getActiveAuctions();
+  await ctx.answerCbQuery();
+  if (!auctions.length) {
+    return ctx.editMessageText('🏆 Hozircha faol auksionlar mavjud emas.');
+  }
+  await ctx.editMessageText(`🏆 Faol auksionlar (${auctions.length}):`, auctionListInline(auctions));
+});
+
+const AUCTION_SCOPE = 'auction';
+
+bot.action(/auction_bid_(.+)/, async (ctx) => {
+  const auctionId = ctx.match[1];
+  const auction = await getAuctionById(auctionId);
+  if (!auction || auction.status !== 'active') {
+    return ctx.answerCbQuery('Auksion faol emas', { show_alert: true });
+  }
+  await ctx.answerCbQuery();
+  const { setState } = require('./states');
+  setState(AUCTION_SCOPE, ctx.from.id, 'awaiting_bid_amount', { auctionId });
+  const minRequired = Math.max(auction.minBid, auction.currentBid + 1);
+  await ctx.reply(`💰 Stavkangizni kiriting (koinda). Minimal: ${minRequired}`);
 });
 
 bot.hears('⚙️ Sozlamalar', async (ctx) => {
@@ -199,6 +273,10 @@ bot.hears('📊 Statistika', adminOnlyMiddleware(), async (ctx) => {
   await ctx.reply(formatOverallStatistics(stats));
 });
 bot.hears('📜 Loglar', adminOnlyMiddleware(), admin.showRecentLogs);
+bot.hears('🧩 Shablon yuklash', adminOnlyMiddleware(), admin.showTemplateUploadPrompt);
+bot.hears('⚙️ Referal sozlamalari', adminOnlyMiddleware(), admin.showAdminSettings);
+bot.hears('🏆 Auksion yaratish', adminOnlyMiddleware(), admin.startAuctionCreation);
+bot.hears('🪙 Koin sozlamalari', adminOnlyMiddleware(), admin.showCoinSettings);
 
 bot.action(/blockuser_(\d+)/, adminOnlyMiddleware(), (ctx) => admin.toggleBlockUser(ctx, Number(ctx.match[1]), true));
 bot.action(/unblockuser_(\d+)/, adminOnlyMiddleware(), (ctx) => admin.toggleBlockUser(ctx, Number(ctx.match[1]), false));
@@ -210,7 +288,7 @@ bot.action('broadcast_cancel', adminOnlyMiddleware(), async (ctx) => {
   await ctx.editMessageText('❌ Broadcast bekor qilindi.');
 });
 
-bot.action(/tpl_(blank|subscription|autoreply|autoforward|shop|lottery|support)/, builder.handleTemplateSelection);
+bot.action(/tpl_(.+)/, builder.handleTemplateSelection);
 
 bot.action('noop', (ctx) => ctx.answerCbQuery());
 
@@ -241,12 +319,64 @@ bot.on('text', async (ctx, next) => {
         return admin.resolveUserSearch(ctx, text);
       case 'awaiting_referral_count':
         return admin.handleReferralCountInput(ctx);
+      case 'awaiting_coins_per_referral':
+        return admin.handleCoinsPerReferralInput(ctx);
+      case 'awaiting_bot_price_coins':
+        return admin.handleBotPriceCoinsInput(ctx);
+      case 'awaiting_auction_title':
+      case 'awaiting_auction_description':
+      case 'awaiting_auction_min_bid':
+      case 'awaiting_auction_pot':
+      case 'awaiting_auction_duration':
+        return admin.handleAuctionCreationInput(ctx);
       default:
         if (adminState.step && adminState.step.startsWith('awaiting_')) {
           // kanal qo'shish oqimi kanal ro'yxati ochiq bo'lganda ishlaydi
         }
         break;
     }
+  }
+
+  // Auksionda stavka miqdorini kiritish
+  const auctionState = getState(AUCTION_SCOPE, ctx.from.id);
+  if (auctionState && auctionState.step === 'awaiting_bid_amount') {
+    const text = (ctx.message.text || '').trim();
+    if (text === '❌ Bekor qilish') {
+      clearState(AUCTION_SCOPE, ctx.from.id);
+      await ctx.reply('❌ Bekor qilindi.', mainMenu);
+      return;
+    }
+    const amount = parseInt(text, 10);
+    if (Number.isNaN(amount) || amount < 1) {
+      await ctx.reply('❌ Noto\'g\'ri miqdor. Musbat raqam kiriting.');
+      return;
+    }
+    const result = await placeBid(auctionState.data.auctionId, ctx.from.id, amount);
+    clearState(AUCTION_SCOPE, ctx.from.id);
+    if (!result.ok) {
+      const messages = {
+        not_found: '❌ Auksion topilmadi.',
+        ended: '❌ Auksion allaqachon tugagan.',
+        too_low: `❌ Stavka juda kichik. Minimal: ${result.minRequired || ''}`,
+        already_leading: '✅ Siz allaqachon yetakchisiz!',
+        no_coins: '❌ Koiningiz yetarli emas.',
+        race_condition: '❌ Boshqa foydalanuvchi ayni damda stavka qo\'ydi, qaytadan urinib ko\'ring.',
+      };
+      await ctx.reply(messages[result.reason] || '❌ Xatolik yuz berdi.');
+      return;
+    }
+    await ctx.reply(`✅ Stavkangiz qabul qilindi: ${amount} koin! Hozircha yetakchisiz.`);
+    if (result.previousBidderId) {
+      try {
+        await ctx.telegram.sendMessage(
+          result.previousBidderId,
+          `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} koiningiz hisobingizga qaytarildi.`
+        );
+      } catch (err) {
+        // foydalanuvchi botni bloklagan bo'lishi mumkin
+      }
+    }
+    return;
   }
 
   // Kanal qo'shish: agar oxirgi xabar "📢 Kanallar" bo'lsa alohida state kerak emas,
@@ -256,6 +386,15 @@ bot.on('text', async (ctx, next) => {
     return admin.handleAddChannel(ctx, ctx.telegram);
   }
 
+  return next();
+});
+
+// Maxsus shablon fayli (.js) yuklash
+bot.on('document', async (ctx, next) => {
+  const adminState = getState(admin.SCOPE, ctx.from.id);
+  if (adminState && adminState.step === 'awaiting_template_file' && (await isAdminUser(ctx.from.id))) {
+    return admin.handleTemplateFileUpload(ctx);
+  }
   return next();
 });
 
