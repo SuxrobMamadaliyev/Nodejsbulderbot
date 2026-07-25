@@ -19,6 +19,7 @@
     "express": "^4.19.2",
     "mongoose": "^8.5.1",
     "ioredis": "^5.4.1",
+    "@upstash/redis": "^1.34.0",
     "bullmq": "^5.12.0",
     "axios": "^1.7.4",
     "dotenv": "^16.4.5",
