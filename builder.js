@@ -1,9 +1,12 @@
 const { setState, getState, updateStateData, clearState } = require('./states');
 const { isValidBotToken, isValidBotName, isValidDescription, sanitizeText } = require('./security');
 const { createBot, startBot, verifyTokenWithTelegram } = require('./botmanager');
-const { getUserByTelegramId, consumeFreeBotCredit } = require('./users');
+const { getUserByTelegramId, consumeFreeBotCredit, spendCoins } = require('./users');
+const { getReferralInfo } = require('./referral');
+const { getBotPriceCoins } = require('./settings');
 const { listChannels, checkUserSubscription } = require('./subscription');
-const { templateSelectionInline, cancelKeyboard, mainMenu } = require('./buttons');
+const { templateSelectionInline, referralShareInline, cancelKeyboard, mainMenu } = require('./buttons');
+const { getTemplateList } = require('./templates');
 const { Bot } = require('./database');
 const logger = require('./logger');
 
@@ -12,32 +15,39 @@ const SCOPE = 'builder';
 async function canCreateBot(telegramId) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) return { allowed: false, reason: 'Foydalanuvchi topilmadi' };
-  if (user.freeBotCredits < 1) {
-    return { allowed: false, reason: 'no_credits' };
+  const botPrice = await getBotPriceCoins();
+  if (user.freeBotCredits >= 1) {
+    return { allowed: true, user, payWith: 'credit' };
   }
-  return { allowed: true, user };
+  if (user.coins >= botPrice) {
+    return { allowed: true, user, payWith: 'coins', botPrice };
+  }
+  return { allowed: false, reason: 'no_credits', botPrice };
 }
 
-async function startBotCreation(ctx) {
-  const check = await canCreateBot(ctx.from.id);
-  if (!check.allowed) {
-    if (check.reason === 'no_credits') {
-      return ctx.reply(
-        '❌ Sizda bot yaratish uchun yetarli referal krediti yo\'q.\n' +
-          '👥 Do\'stlaringizni taklif qiling va kerakli referal sonini to\'plang!\n' +
-          'Referal holatini "👥 Referallar" bo\'limidan ko\'rishingiz mumkin.'
-      );
-    }
-    return ctx.reply('❌ Xatolik: ' + check.reason);
-  }
+async function replyNeedReferral(ctx, botPrice) {
+  const me = await ctx.telegram.getMe();
+  const info = await getReferralInfo(ctx.from.id, me.username);
+  const remaining = info ? info.remaining || info.required : '?';
+  const price = botPrice || (info ? undefined : undefined);
+  await ctx.reply(
+    `❌ Bot yaratish uchun sizda yetarli referal krediti yoki koin yo'q.\n\n` +
+      `👥 Do'stlaringizni taklif qiling: yana ${remaining} ta referal to'plasangiz, bepul bot yaratish huquqiga ega bo'lasiz.\n` +
+      `🪙 Yoki koin to'plab, ${price || ''} koinga bot sotib olishingiz mumkin (hozirgi koiningiz: ${info ? info.coins : 0}).\n\n` +
+      `🔗 Sizning referal havolangiz:\n${info ? info.link : '-'}`,
+    info ? referralShareInline(info.link, '🤖 Bepul Telegram bot yaratish uchun shu havoladan foydalaning!') : undefined
+  );
+}
 
-  setState(SCOPE, ctx.from.id, 'awaiting_token', {});
+// Bot yaratish endi shu tartibda ishlaydi:
+// 1) Avval mavjud shablonlar (botlar turi) ro'yxati ko'rsatiladi
+// 2) Foydalanuvchi biror shablonni tanlaganda referal talabi tekshiriladi -
+//    yetarli bo'lmasa referal taklif qilinadi, yetarli bo'lsa token so'raladi
+async function startBotCreation(ctx) {
+  setState(SCOPE, ctx.from.id, 'awaiting_template', {});
   return ctx.reply(
-    '🤖 Yangi bot yaratish\n\n' +
-      '1️⃣ Avval @BotFather orqali yangi bot yarating.\n' +
-      '2️⃣ Undan olingan tokenni shu yerga yuboring.\n\n' +
-      'Masalan: 123456789:AAExampleToken...',
-    cancelKeyboard
+    '🤖 Yangi bot yaratish\n\nQuyidagi mavjud bot turlaridan birini tanlang:',
+    templateSelectionInline(getTemplateList())
   );
 }
 
@@ -96,9 +106,7 @@ async function handleBuilderText(ctx) {
         return true;
       }
       updateStateData(SCOPE, ctx.from.id, { description });
-      setState(SCOPE, ctx.from.id, 'awaiting_template');
-      await ctx.reply('📦 Endi bot turini tanlang:', templateSelectionInline());
-      return true;
+      return finalizeBotCreation(ctx);
     }
 
     default:
@@ -118,7 +126,38 @@ async function handleTemplateSelection(ctx) {
   const check = await canCreateBot(ctx.from.id);
   if (!check.allowed) {
     clearState(SCOPE, ctx.from.id);
-    return ctx.reply('❌ Bot yaratish uchun kredit yetarli emas.');
+    if (check.reason === 'no_credits') {
+      return replyNeedReferral(ctx, check.botPrice);
+    }
+    return ctx.reply('❌ Xatolik: ' + check.reason);
+  }
+
+  updateStateData(SCOPE, ctx.from.id, { templateType });
+  setState(SCOPE, ctx.from.id, 'awaiting_token');
+  await ctx.editMessageText(
+    `📦 Tanlangan tur: ${templateType}\n\n✅ Sizda bot yaratish huquqi bor! (${
+      check.payWith === 'coins' ? `🪙 ${check.botPrice} koin hisobidan yechiladi` : '🎁 bepul kredit hisobidan'
+    })`
+  );
+  await ctx.reply(
+    '1️⃣ Avval @BotFather orqali yangi bot yarating.\n' +
+      '2️⃣ Undan olingan tokenni shu yerga yuboring.\n\n' +
+      'Masalan: 123456789:AAExampleToken...',
+    cancelKeyboard
+  );
+}
+
+async function finalizeBotCreation(ctx) {
+  const state = getState(SCOPE, ctx.from.id);
+
+  // Navbatdagi bosqichlar davomida kredit/koin boshqa joyda sarflanmaganini yana bir bor tekshiramiz
+  const check = await canCreateBot(ctx.from.id);
+  if (!check.allowed) {
+    clearState(SCOPE, ctx.from.id);
+    if (check.reason === 'no_credits') {
+      return replyNeedReferral(ctx, check.botPrice);
+    }
+    return ctx.reply('❌ Xatolik: ' + check.reason);
   }
 
   try {
@@ -127,10 +166,21 @@ async function handleTemplateSelection(ctx) {
       token: state.data.token,
       botName: state.data.botName,
       description: state.data.description,
-      templateType,
+      templateType: state.data.templateType,
     });
 
-    await consumeFreeBotCredit(ctx.from.id);
+    if (check.payWith === 'coins') {
+      const spent = await spendCoins(ctx.from.id, check.botPrice);
+      if (!spent) {
+        // Musobaqa holati: koin boshqa joyda sarflab bo'lingan, botni ham bekor qilamiz
+        await Bot.deleteOne({ _id: botDoc._id });
+        clearState(SCOPE, ctx.from.id);
+        return replyNeedReferral(ctx, check.botPrice);
+      }
+    } else {
+      await consumeFreeBotCredit(ctx.from.id);
+    }
+
     await startBot(botDoc);
 
     clearState(SCOPE, ctx.from.id);
@@ -139,14 +189,17 @@ async function handleTemplateSelection(ctx) {
       `🎉 Bot muvaffaqiyatli yaratildi va ishga tushirildi!\n\n` +
         `🤖 Nomi: ${botDoc.botName}\n` +
         `🔗 Username: @${botDoc.botUsername}\n` +
-        `📦 Turi: ${templateType}\n\n` +
+        `📦 Turi: ${state.data.templateType}\n` +
+        `💳 To'lov: ${check.payWith === 'coins' ? `${check.botPrice} koin` : '1 bepul kredit'}\n\n` +
         `Botni "📂 Mening botlarim" bo'limidan boshqarishingiz mumkin.`,
       mainMenu
     );
+    return true;
   } catch (err) {
     logger.error({ err: err.message }, 'Bot yaratishda xatolik');
     clearState(SCOPE, ctx.from.id);
     await ctx.reply(`❌ Bot yaratishda xatolik yuz berdi: ${err.message}`, mainMenu);
+    return true;
   }
 }
 
