@@ -84,6 +84,35 @@ async function getAllActiveUserIds() {
   return users.map((u) => u.telegramId);
 }
 
+// ===================== COIN (KOIN) BALANSI =====================
+
+async function getCoins(telegramId) {
+  const user = await User.findOne({ telegramId }, { coins: 1 });
+  return user ? user.coins : 0;
+}
+
+async function addCoins(telegramId, amount) {
+  if (!amount) return null;
+  return User.findOneAndUpdate(
+    { telegramId },
+    { $inc: { coins: amount } },
+    { new: true }
+  );
+}
+
+/**
+ * Foydalanuvchi hisobidan koin yechib oladi. Agar mablag' yetarli bo'lmasa false qaytaradi
+ * va hisobga tegmaydi (atomik shart bilan).
+ */
+async function spendCoins(telegramId, amount) {
+  if (!amount || amount <= 0) return true;
+  const result = await User.updateOne(
+    { telegramId, coins: { $gte: amount } },
+    { $inc: { coins: -amount } }
+  );
+  return result.modifiedCount > 0;
+}
+
 module.exports = {
   findOrCreateUser,
   getUserByTelegramId,
@@ -95,4 +124,7 @@ module.exports = {
   grantFreeBotCredit,
   consumeFreeBotCredit,
   getAllActiveUserIds,
+  getCoins,
+  addCoins,
+  spendCoins,
 };
