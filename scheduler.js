@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { Bot, Log } = require('./database');
 const { runtimeBots, startBot } = require('./botmanager');
+const { closeExpiredAuctions } = require('./auction');
 const logger = require('./logger');
 
 /**
@@ -42,9 +43,35 @@ function scheduleLogCleanup() {
   });
 }
 
+/**
+ * Har daqiqada muddati tugagan koin auksionlarini yopadi va
+ * g'olibga xabar yuborib, koinlarini hisobiga qo'shadi.
+ */
+function scheduleAuctionClosing() {
+  cron.schedule('* * * * *', async () => {
+    try {
+      // Aylanma require'dan qochish uchun bot.js shu yerda, kerak bo'lganda yuklanadi
+      const bot = require('./bot');
+      const closedCount = await closeExpiredAuctions(async (winnerId, auction, payout) => {
+        await bot.telegram.sendMessage(
+          winnerId,
+          `🏆 Tabriklaymiz! "${auction.title}" auksionida g'olib bo'ldingiz!\n\n` +
+            `💰 Hisobingizga ${payout} koin qo'shildi (stavka + bonus).`
+        );
+      });
+      if (closedCount) {
+        logger.info(`${closedCount} ta auksion yopildi`);
+      }
+    } catch (err) {
+      logger.error({ err: err.message }, 'Auksionlarni yopishda xatolik');
+    }
+  });
+}
+
 function startScheduler() {
   scheduleBotHealthCheck();
   scheduleLogCleanup();
+  scheduleAuctionClosing();
   logger.info('Rejalashtiruvchi (scheduler) ishga tushdi');
 }
 
