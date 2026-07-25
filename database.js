@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema(
     referralCode: { type: String, unique: true, index: true },
     referralsCount: { type: Number, default: 0 },
     freeBotCredits: { type: Number, default: 0 },
+    coins: { type: Number, default: 0 },
     isBlocked: { type: Boolean, default: false },
     isAdmin: { type: Boolean, default: false },
     lastSeenAt: { type: Date, default: Date.now },
@@ -70,6 +71,10 @@ const templateSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     config: { type: mongoose.Schema.Types.Mixed, default: {} },
     isActive: { type: Boolean, default: true },
+    isCustom: { type: Boolean, default: false },
+    code: { type: String, default: null },
+    fileName: { type: String, default: null },
+    addedBy: { type: Number, default: null },
   },
   { timestamps: true }
 );
@@ -100,6 +105,23 @@ const logSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const auctionSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    description: { type: String, default: '' },
+    potCoins: { type: Number, required: true }, // g'olibga qo'shimcha beriladigan koin miqdori
+    minBid: { type: Number, required: true, default: 10 },
+    currentBid: { type: Number, default: 0 },
+    currentBidderId: { type: Number, default: null },
+    status: { type: String, enum: ['active', 'ended', 'cancelled'], default: 'active' },
+    endsAt: { type: Date, required: true },
+    createdBy: { type: Number, required: true },
+    winnerId: { type: Number, default: null },
+    payoutAmount: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
+
 const statisticsSchema = new mongoose.Schema(
   {
     date: { type: String, required: true, unique: true }, // YYYY-MM-DD
@@ -122,6 +144,7 @@ const Admin = mongoose.model('Admin', adminSchema);
 const Settings = mongoose.model('Settings', settingsSchema);
 const Log = mongoose.model('Log', logSchema);
 const Statistics = mongoose.model('Statistics', statisticsSchema);
+const Auction = mongoose.model('Auction', auctionSchema);
 
 async function connectDatabase() {
   mongoose.set('strictQuery', true);
@@ -149,4 +172,5 @@ module.exports = {
   Settings,
   Log,
   Statistics,
+  Auction,
 };
