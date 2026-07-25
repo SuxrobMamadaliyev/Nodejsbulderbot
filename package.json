@@ -1,0 +1,33 @@
+{
+  "name": "telegram-bot-builder-platform",
+  "version": "1.0.0",
+  "description": "100% bepul Telegram Bot Builder Platform - kod yozmasdan Telegram bot yaratish",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "pm2:start": "pm2 start index.js --name bot-builder-platform",
+    "pm2:stop": "pm2 stop bot-builder-platform",
+    "pm2:restart": "pm2 restart bot-builder-platform",
+    "pm2:logs": "pm2 logs bot-builder-platform"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.1",
+    "ioredis": "^5.4.1",
+    "bullmq": "^5.12.0",
+    "axios": "^1.7.4",
+    "dotenv": "^16.4.5",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "pm2": "^5.4.2"
+  },
+  "license": "MIT"
+}
