@@ -1,7 +1,9 @@
 const cron = require('node-cron');
+const config = require('./config');
 const { Bot, Log } = require('./database');
 const { runtimeBots, startBot } = require('./botmanager');
-const { closeExpiredAuctions } = require('./auction');
+const { closeExpiredAuctions, getActiveAuctions, renderChannelAuctionText } = require('./auction');
+const { channelAuctionInline } = require('./buttons');
 const logger = require('./logger');
 
 /**
@@ -58,6 +60,16 @@ function scheduleAuctionClosing() {
           `🏆 Tabriklaymiz! "${auction.title}" auksionida g'olib bo'ldingiz!\n\n` +
             `💰 Hisobingizga ${payout} RWcoin qo'shildi (stavka + bonus).`
         );
+        if (auction.channelMessageId && config.auctionChannelId) {
+          await bot.telegram
+            .editMessageText(
+              config.auctionChannelId,
+              auction.channelMessageId,
+              undefined,
+              renderChannelAuctionText(auction, { finished: true })
+            )
+            .catch(() => {});
+        }
       });
       if (closedCount) {
         logger.info(`${closedCount} ta auksion yopildi`);
@@ -68,10 +80,42 @@ function scheduleAuctionClosing() {
   });
 }
 
+/**
+ * Kanalga e'lon qilingan faol auksionlarning "Qolgan vaqt" hisoblagichini
+ * har daqiqada yangilab turadi, shunda foydalanuvchilar jonli countdown'ni
+ * ko'radi (rasmdagi namunaga o'xshab).
+ */
+function scheduleAuctionChannelRefresh() {
+  cron.schedule('* * * * *', async () => {
+    if (!config.auctionChannelId) return;
+    try {
+      const bot = require('./bot');
+      const activeAuctions = await getActiveAuctions();
+      const me = await bot.telegram.getMe();
+      for (const auction of activeAuctions) {
+        if (!auction.channelMessageId) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await bot.telegram
+          .editMessageText(
+            config.auctionChannelId,
+            auction.channelMessageId,
+            undefined,
+            renderChannelAuctionText(auction),
+            channelAuctionInline(auction, me.username)
+          )
+          .catch(() => {});
+      }
+    } catch (err) {
+      logger.error({ err: err.message }, 'Auksion kanal xabarini yangilashda xatolik');
+    }
+  });
+}
+
 function startScheduler() {
   scheduleBotHealthCheck();
   scheduleLogCleanup();
   scheduleAuctionClosing();
+  scheduleAuctionChannelRefresh();
   logger.info('Rejalashtiruvchi (scheduler) ishga tushdi');
 }
 
