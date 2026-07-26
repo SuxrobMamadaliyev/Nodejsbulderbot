@@ -113,6 +113,8 @@ const auctionSchema = new mongoose.Schema(
     minBid: { type: Number, required: true, default: 10 },
     currentBid: { type: Number, default: 0 },
     currentBidderId: { type: Number, default: null },
+    bidsCount: { type: Number, default: 0 }, // jami qo'yilgan garovlar soni
+    channelMessageId: { type: Number, default: null }, // kanaldagi jonli e'lon xabari ID
     status: { type: String, enum: ['active', 'ended', 'cancelled'], default: 'active' },
     endsAt: { type: Date, required: true },
     createdBy: { type: Number, required: true },
