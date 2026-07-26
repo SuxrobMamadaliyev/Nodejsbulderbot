@@ -21,6 +21,10 @@ const config = {
 
   superAdminIds: parseIds(process.env.SUPER_ADMIN_IDS),
 
+  // Foydalanuvchilar o'zi boshlagan auksionlar shu kanalga e'lon qilinadi.
+  // @username yoki -100... ko'rinishidagi kanal ID (bot kanalga admin bo'lishi kerak).
+  auctionChannelId: process.env.AUCTION_CHANNEL_ID || '',
+
   tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || 'default_dev_key_change_me_32chars',
 
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '10000', 10),
