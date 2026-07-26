@@ -2,10 +2,13 @@ const { Auction, User } = require('./database');
 const { addRwcoin, spendRwcoin } = require('./users');
 const logger = require('./logger');
 
+// Foydalanuvchilar o'zi auksion boshlaganda talab qilinadigan eng kam garov.
+const MIN_USER_AUCTION_BID = 10;
+
 /**
  * KOIN AUKSIONI - QANDAY ISHLAYDI
- * - Admin auksion ochadi: sarlavha, minimal stavka (minBid), soniyalarda muddat
- *   va g'olibga beriladigan bonus RWcoin miqdori (potRwcoin).
+ * - Admin yoki oddiy foydalanuvchi auksion ochadi: sarlavha, minimal stavka (minBid),
+ *   soniyalarda muddat va g'olibga beriladigan bonus RWcoin miqdori (potRwcoin).
  * - Foydalanuvchilar o'z RWcoinlaridan stavka qo'yadi. Har bir yangi stavka
  *   avvalgi eng yuqori stavkachining RWcoinini to'liq qaytaradi va yangi
  *   stavkachining RWcoinini hisobidan yechib, auksionga "band" qiladi.
@@ -15,19 +18,38 @@ const logger = require('./logger');
  *   ular hech narsa yo'qotmaydi, faqat g'olib bo'lmasa bonusni yo'qotadi.
  */
 
-async function createAuction({ title, description, potRwcoin, minBid, durationMinutes, createdBy }) {
+async function createAuction({ title, description, potRwcoin, minBid, durationMinutes, createdBy, startBid = null }) {
   const endsAt = new Date(Date.now() + durationMinutes * 60 * 1000);
-  return Auction.create({
-    title,
-    description: description || '',
-    potRwcoin,
-    minBid,
-    currentBid: 0,
-    currentBidderId: null,
-    status: 'active',
-    endsAt,
-    createdBy,
-  });
+
+  // Foydalanuvchi o'zi auksion boshlasa, kiritgan garovi darhol birinchi
+  // stavka sifatida qabul qilinadi va uning RWcoinidan yechiladi.
+  if (startBid) {
+    const hasFunds = await spendRwcoin(createdBy, startBid);
+    if (!hasFunds) {
+      throw new Error('RWcoin yetarli emas');
+    }
+  }
+
+  try {
+    return await Auction.create({
+      title,
+      description: description || '',
+      potRwcoin,
+      minBid,
+      currentBid: startBid || 0,
+      currentBidderId: startBid ? createdBy : null,
+      bidsCount: startBid ? 1 : 0,
+      status: 'active',
+      endsAt,
+      createdBy,
+    });
+  } catch (err) {
+    // Auksion yozuvini yaratib bo'lmadi - yechilgan RWcoinni qaytaramiz
+    if (startBid) {
+      await addRwcoin(createdBy, startBid);
+    }
+    throw err;
+  }
 }
 
 async function getActiveAuctions() {
@@ -69,7 +91,7 @@ async function placeBid(auctionId, telegramId, bidAmount) {
 
   const updated = await Auction.findOneAndUpdate(
     { _id: auctionId, status: 'active', currentBid: previousBid },
-    { $set: { currentBid: bidAmount, currentBidderId: telegramId } },
+    { $set: { currentBid: bidAmount, currentBidderId: telegramId }, $inc: { bidsCount: 1 } },
     { new: true }
   );
 
@@ -124,6 +146,39 @@ async function closeAuction(auction, notifyFn) {
   }
 }
 
+/**
+ * Kanaldagi jonli auksion posti uchun matnni tayyorlaydi (rasmdagi
+ * AuksionRasmiy namunasiga o'xshab, faqat RWcoinda). Bu funksiya sof (pure)
+ * bo'lib, faqat auction hujjatiga qarab matn qaytaradi - Telegram bilan
+ * bog'liq hech narsa qilmaydi, shuning uchun uni bot.js ham, scheduler.js
+ * ham xavfsiz ishlata oladi.
+ */
+function renderChannelAuctionText(auction, { finished = false } = {}) {
+  const bank = auction.currentBid + auction.potRwcoin;
+  if (finished) {
+    return (
+      `⭐ - Auksion tugadi\n` +
+      `⭐ - Lider: Foydalanuvchi tikdi: ${auction.currentBid} RWcoin\n` +
+      `⭐ - Auksion banki: ${bank} RWcoin\n` +
+      `⭐ - G'olib auksion bankining hammasini oldi: +${bank} RWcoin`
+    );
+  }
+  const msLeft = Math.max(0, auction.endsAt.getTime() - Date.now());
+  const totalSec = Math.floor(msLeft / 1000);
+  const hh = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSec % 60).padStart(2, '0');
+  return (
+    `⭐ - Auksion aktivlashdi\n` +
+    `⭐ - Holati: Boshlangan\n` +
+    `⭐ - Qolgan vaqt: ${hh}:${mm}:${ss}\n` +
+    `⭐ - Auksion banki: ${bank} RWcoin\n` +
+    `⭐ - Garovlar soni: ${auction.bidsCount}ta\n` +
+    `⭐ - Lider: Foydalanuvchi tikdi: ${auction.currentBid} RWcoin\n` +
+    `⭐ - Garovni oshirish uchun tugmalardan foydalaning`
+  );
+}
+
 async function cancelAuction(auctionId) {
   const auction = await Auction.findById(auctionId);
   if (!auction) return { ok: false, reason: 'not_found' };
@@ -136,6 +191,8 @@ async function cancelAuction(auctionId) {
 }
 
 module.exports = {
+  MIN_USER_AUCTION_BID,
+  renderChannelAuctionText,
   createAuction,
   getActiveAuctions,
   getAuctionById,
