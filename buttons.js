@@ -3,7 +3,7 @@ const { Markup } = require('telegraf');
 const mainMenu = Markup.keyboard([
   ['🤖 Bot yaratish', '📂 Mening botlarim'],
   ['👥 Referallar', '📊 Profil'],
-  ['🪙 Koinlarim', '🏆 Auksion'],
+  ['💰 RWcoin', '🏆 Auksion'],
   ['⚙️ Sozlamalar', '🆘 Yordam'],
 ]).resize();
 
@@ -11,8 +11,8 @@ const adminMenu = Markup.keyboard([
   ['👥 Foydalanuvchilar', '🤖 Botlar'],
   ['📢 Kanallar', '🔗 Referallar'],
   ['📤 Broadcast', '📊 Statistika'],
-  ['🧩 Shablon yuklash', '⚙️ Referal sozlamalari'],
-  ['🏆 Auksion yaratish', '🪙 Koin sozlamalari'],
+  ['🧩 Shablon yuklash', '💵 Shablon narxlari'],
+  ['🏆 Auksion yaratish', '💰 RWcoin sozlamalari'],
   ['📜 Loglar', '⬅️ Asosiy menyu'],
 ]).resize();
 
@@ -32,10 +32,19 @@ function confirmInline(yesData, noData) {
 // Har doim shu ro'yxatdan tugmalar quriladi, shuning uchun admin yuklagan yangi
 // (custom) shablonlar ham avtomatik ravishda bot yaratish menyusiga qo'shiladi.
 function templateSelectionInline(templates = []) {
-  const rows = templates.map((t) => [Markup.button.callback(`📦 ${t.name}`, `tpl_${t.key}`)]);
+  const rows = templates.map((t) => [
+    Markup.button.callback(`📦 ${t.name} — 💰${t.priceRwcoin} RWcoin`, `tpl_${t.key}`),
+  ]);
   return Markup.inlineKeyboard(
     rows.length ? rows : [[Markup.button.callback('⬜ Blank', 'tpl_blank')]]
   );
+}
+
+function templatePriceListInline(templates) {
+  const rows = templates.map((t) => [
+    Markup.button.callback(`📦 ${t.name} — 💰${t.priceRwcoin}`, `setprice_${t.key}`),
+  ]);
+  return Markup.inlineKeyboard(rows);
 }
 
 function referralShareInline(link, shareText) {
@@ -99,6 +108,7 @@ module.exports = {
   backKeyboard,
   confirmInline,
   templateSelectionInline,
+  templatePriceListInline,
   referralShareInline,
   auctionListInline,
   auctionDetailInline,
