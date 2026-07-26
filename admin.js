@@ -1,6 +1,6 @@
 const { Bot, Channel, Log, Admin } = require('./database');
 const { setState, getState, updateStateData, clearState } = require('./states');
-const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline } = require('./buttons');
+const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline, channelListInline } = require('./buttons');
 const { getUsersPaginated, searchUser, blockUser, unblockUser } = require('./users');
 const { addChannel, removeChannel, listChannels, resolveChannelChatId } = require('./subscription');
 const { getRwcoinPerReferral, setRwcoinPerReferral } = require('./settings');
@@ -102,9 +102,10 @@ async function showChannels(ctx) {
   }
   const lines = channels.map((c, i) => `${i + 1}. ${c.title} (${c.username || c.chatId})`);
   await ctx.reply(
-    `📢 Majburiy obuna kanallari:\n\n${lines.join('\n')}\n\nYangi kanal qo'shish uchun @username yoki ID yuboring.`,
-    cancelKeyboard
+    `📢 Majburiy obuna kanallari:\n\n${lines.join('\n')}\n\nO'chirish uchun quyidagi tugmalardan birini bosing.`,
+    channelListInline(channels)
   );
+  await ctx.reply('Yangi kanal qo\'shish uchun @username yoki ID yuboring.', cancelKeyboard);
 }
 
 async function handleAddChannel(ctx, telegram) {
@@ -119,6 +120,27 @@ async function handleAddChannel(ctx, telegram) {
   } catch (err) {
     logger.warn({ err: err.message }, 'Kanal qo\'shishda xatolik');
     await ctx.reply('❌ Kanalni topib bo\'lmadi. Bot kanalga admin qilib qo\'shilganini tekshiring.');
+  }
+}
+
+async function handleDeleteChannel(ctx, channelId) {
+  try {
+    const channel = await Channel.findById(channelId);
+    await removeChannel(channelId);
+    await ctx.answerCbQuery(channel ? `✅ O'chirildi: ${channel.title}` : '✅ Kanal o\'chirildi');
+
+    const channels = await listChannels({ scope: 'master' });
+    if (!channels.length) {
+      return ctx.editMessageText('📢 Majburiy obuna kanallari hali qo\'shilmagan.');
+    }
+    const lines = channels.map((c, i) => `${i + 1}. ${c.title} (${c.username || c.chatId})`);
+    await ctx.editMessageText(
+      `📢 Majburiy obuna kanallari:\n\n${lines.join('\n')}\n\nO'chirish uchun quyidagi tugmalardan birini bosing.`,
+      channelListInline(channels)
+    );
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Kanalni o\'chirishda xatolik');
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi', { show_alert: true });
   }
 }
 
@@ -431,6 +453,7 @@ module.exports = {
   showBotDetail,
   showChannels,
   handleAddChannel,
+  handleDeleteChannel,
   startBroadcastFlow,
   handleBroadcastContent,
   handleBroadcastButtonsAndConfirm,
