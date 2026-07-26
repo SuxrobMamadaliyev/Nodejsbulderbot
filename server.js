@@ -11,6 +11,17 @@ function createServer(masterBot) {
     res.json({ name: 'Telegram Bot Builder Platform', status: 'running' });
   });
 
+  // UptimeRobot yoki boshqa monitoring xizmatlari uchun yengil endpoint.
+  // Bazaga yoki botlarga murojaat qilmaydi — faqat serverning ishlab
+  // turganini tasdiqlaydi, shuning uchun tez va arzon javob qaytaradi.
+  app.get('/ping', (req, res) => {
+    res.status(200).send('pong');
+  });
+
+  app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+  });
+
   app.use('/webhook', buildWebhookRouter(masterBot));
   app.use('/api', buildApiRouter());
 
