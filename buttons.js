@@ -83,6 +83,28 @@ function channelListInline(channels) {
   );
 }
 
+// Kanaldagi jonli auksion posti uchun tugmalar: tezkor stavka qiymatlari,
+// balansni ko'rish va botga qaytish. `auction._id` MongoDB ID, callback_data
+// 64 baytdan oshmasligi kerak, shuning uchun qisqa prefiks ishlatiladi.
+function channelAuctionInline(auction, botUsername) {
+  const base = auction.currentBid || auction.minBid || 0;
+  const steps = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const rows = [];
+  for (let i = 0; i < steps.length; i += 5) {
+    rows.push(
+      steps.slice(i, i + 5).map((step) =>
+        Markup.button.callback(`${base + step}`, `chauc_${auction._id}_${base + step}`)
+      )
+    );
+  }
+  rows.push([Markup.button.callback(`${base + 100}`, `chauc_${auction._id}_${base + 100}`)]);
+  rows.push([Markup.button.callback('💳 Mening balansim', `chaucbal_${auction._id}`)]);
+  if (botUsername) {
+    rows.push([Markup.button.url('➡️ Botga qaytish', `https://t.me/${botUsername}`)]);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
 function botListInline(bots) {
   const rows = bots.map((b) => [
     Markup.button.callback(`${b.status === 'active' ? '🟢' : '🔴'} @${b.botUsername}`, `botinfo_${b._id}`),
@@ -123,6 +145,7 @@ module.exports = {
   auctionDetailInline,
   subscriptionCheckInline,
   channelListInline,
+  channelAuctionInline,
   botListInline,
   botManageInline,
   paginationInline,
