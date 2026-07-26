@@ -28,9 +28,8 @@ const config = {
   floodLimitMax: parseInt(process.env.FLOOD_LIMIT_MAX || '5', 10),
   floodLimitWindowMs: parseInt(process.env.FLOOD_LIMIT_WINDOW_MS || '3000', 10),
 
-  defaultReferralRequired: parseInt(process.env.DEFAULT_REFERRAL_REQUIRED || '20', 10),
-  defaultCoinsPerReferral: parseInt(process.env.DEFAULT_COINS_PER_REFERRAL || '10', 10),
-  defaultBotPriceCoins: parseInt(process.env.DEFAULT_BOT_PRICE_COINS || '100', 10),
+  defaultRwcoinPerReferral: parseInt(process.env.DEFAULT_RWCOIN_PER_REFERRAL || '10', 10),
+  defaultTemplatePriceRwcoin: parseInt(process.env.DEFAULT_TEMPLATE_PRICE_RWCOIN || '100', 10),
 
   logLevel: process.env.LOG_LEVEL || 'info',
 };
