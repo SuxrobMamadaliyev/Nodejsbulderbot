@@ -1,8 +1,16 @@
+const fs = require('fs');
+const path = require('path');
 const { Markup } = require('telegraf');
-const { Channel } = require('./database');
+const { Channel, Template } = require('./database');
 const { checkUserSubscription } = require('./subscription');
 const { subscriptionCheckInline } = require('./buttons');
+const config = require('./config');
 const logger = require('./logger');
+
+const CUSTOM_TEMPLATES_DIR = path.join(__dirname, 'custom_templates');
+if (!fs.existsSync(CUSTOM_TEMPLATES_DIR)) {
+  fs.mkdirSync(CUSTOM_TEMPLATES_DIR, { recursive: true });
+}
 
 // Har bir template child botga qanday xulq-atvor ulashini belgilaydi.
 // registerTemplate(bot, botDoc) chaqiriladi va bot instance ustiga handlerlar o'rnatiladi.
@@ -163,8 +171,37 @@ const TEMPLATES = {
   },
 };
 
-function getTemplateList() {
-  return Object.values(TEMPLATES).map((t) => ({ key: t.key, name: t.name, description: t.description }));
+async function getTemplateList() {
+  const keys = Object.values(TEMPLATES).map((t) => t.key);
+  const priceDocs = await Template.find({ key: { $in: keys } }, { key: 1, priceRwcoin: 1 }).lean();
+  const priceMap = new Map(priceDocs.map((d) => [d.key, d.priceRwcoin]));
+  return Object.values(TEMPLATES).map((t) => ({
+    key: t.key,
+    name: t.name,
+    description: t.description,
+    priceRwcoin: priceMap.has(t.key) ? priceMap.get(t.key) : config.defaultTemplatePriceRwcoin,
+  }));
+}
+
+async function getTemplatePrice(key) {
+  const doc = await Template.findOne({ key }, { priceRwcoin: 1 });
+  return doc ? doc.priceRwcoin : config.defaultTemplatePriceRwcoin;
+}
+
+async function setTemplatePrice(key, priceRwcoin) {
+  const template = getTemplate(key);
+  return Template.updateOne(
+    { key },
+    {
+      $set: { priceRwcoin: Number(priceRwcoin) },
+      $setOnInsert: {
+        name: template.name,
+        description: template.description,
+        isCustom: !!TEMPLATES[key] && key !== 'blank' && !['blank', 'subscription', 'autoreply', 'autoforward', 'shop', 'lottery', 'support'].includes(key),
+      },
+    },
+    { upsert: true }
+  );
 }
 
 function getTemplate(key) {
@@ -180,10 +217,113 @@ function addCustomTemplate(key, definition) {
   TEMPLATES[key] = { key, ...definition };
 }
 
+function slugifyKey(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/\.js$/i, '')
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || `custom_${Date.now()}`;
+}
+
+/**
+ * Yuklab olingan .js fayl kodini tekshiradi va shablon sifatida ro'yxatga oladi.
+ * Fayl module.exports = { name, description, register(bot, botDoc) {...} } shaklida bo'lishi kerak.
+ */
+function validateAndLoadTemplateModule(filePath) {
+  // Har safar diskdan yangilanган holatda o'qish uchun require cache tozalanadi
+  delete require.cache[require.resolve(filePath)];
+  // eslint-disable-next-line global-require, import/no-dynamic-require
+  const mod = require(filePath);
+
+  if (!mod || typeof mod.register !== 'function') {
+    const err = new Error(
+      "Fayl noto'g'ri formatda. U 'module.exports = { name, description, register(bot, botDoc) {...} }' ko'rinishida bo'lishi kerak."
+    );
+    err.code = 'INVALID_TEMPLATE_MODULE';
+    throw err;
+  }
+  return mod;
+}
+
+async function registerCustomTemplateFromCode({ key, name, description, code, fileName, addedBy }) {
+  const safeKey = slugifyKey(key);
+  const filePath = path.join(CUSTOM_TEMPLATES_DIR, `${safeKey}.js`);
+  fs.writeFileSync(filePath, code, 'utf8');
+
+  let mod;
+  try {
+    mod = validateAndLoadTemplateModule(filePath);
+  } catch (err) {
+    // Yaroqsiz faylni diskdan o'chirib tashlaymiz
+    fs.unlinkSync(filePath);
+    throw err;
+  }
+
+  const finalName = name || mod.name || safeKey;
+  const finalDescription = description || mod.description || "Admin tomonidan yuklangan maxsus shablon";
+
+  addCustomTemplate(safeKey, {
+    name: finalName,
+    description: finalDescription,
+    register: mod.register,
+  });
+
+  await Template.updateOne(
+    { key: safeKey },
+    {
+      $set: {
+        name: finalName,
+        description: finalDescription,
+        isActive: true,
+        isCustom: true,
+        code,
+        fileName: fileName || `${safeKey}.js`,
+        addedBy: addedBy || null,
+      },
+      $setOnInsert: { priceRwcoin: config.defaultTemplatePriceRwcoin },
+    },
+    { upsert: true }
+  );
+
+  logger.info({ key: safeKey, addedBy }, "Yangi maxsus shablon botlar ro'yxatiga qo'shildi");
+
+  return { key: safeKey, name: finalName, description: finalDescription };
+}
+
+/**
+ * Server qayta ishga tushganda, oldin yuklangan barcha maxsus shablonlarni
+ * bazadan o'qib, TEMPLATES ro'yxatiga qayta ro'yxatdan o'tkazadi.
+ */
+async function loadCustomTemplatesFromDb() {
+  const docs = await Template.find({ isCustom: true, isActive: true });
+  for (const doc of docs) {
+    try {
+      const filePath = path.join(CUSTOM_TEMPLATES_DIR, doc.fileName || `${doc.key}.js`);
+      fs.writeFileSync(filePath, doc.code, 'utf8');
+      const mod = validateAndLoadTemplateModule(filePath);
+      addCustomTemplate(doc.key, {
+        name: doc.name,
+        description: doc.description,
+        register: mod.register,
+      });
+    } catch (err) {
+      logger.error({ err: err.message, key: doc.key }, "Maxsus shablonni yuklashda xatolik");
+    }
+  }
+  if (docs.length) {
+    logger.info(`${docs.length} ta maxsus shablon bazadan yuklandi`);
+  }
+}
+
 module.exports = {
   TEMPLATES,
   getTemplateList,
   getTemplate,
   registerTemplate,
   addCustomTemplate,
+  registerCustomTemplateFromCode,
+  loadCustomTemplatesFromDb,
+  getTemplatePrice,
+  setTemplatePrice,
 };
