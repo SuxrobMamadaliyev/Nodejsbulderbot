@@ -74,6 +74,15 @@ function subscriptionCheckInline(channels, checkCallback = 'check_subscription')
   return Markup.inlineKeyboard(rows);
 }
 
+function channelListInline(channels) {
+  const rows = channels.map((c) => [
+    Markup.button.callback(`🗑 ${c.title || c.username || c.chatId}`, `delchannel_${c._id}`),
+  ]);
+  return Markup.inlineKeyboard(
+    rows.length ? rows : [[Markup.button.callback('Kanal yo\'q', 'noop')]]
+  );
+}
+
 function botListInline(bots) {
   const rows = bots.map((b) => [
     Markup.button.callback(`${b.status === 'active' ? '🟢' : '🔴'} @${b.botUsername}`, `botinfo_${b._id}`),
@@ -113,6 +122,7 @@ module.exports = {
   auctionListInline,
   auctionDetailInline,
   subscriptionCheckInline,
+  channelListInline,
   botListInline,
   botManageInline,
   paginationInline,
