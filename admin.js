@@ -1,22 +1,15 @@
 const { Bot, Channel, Log, Admin } = require('./database');
 const { setState, getState, updateStateData, clearState } = require('./states');
-const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline } = require('./buttons');
+const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline } = require('./buttons');
 const { getUsersPaginated, searchUser, blockUser, unblockUser } = require('./users');
 const { addChannel, removeChannel, listChannels, resolveChannelChatId } = require('./subscription');
-const {
-  getReferralRequired,
-  setReferralRequired,
-  getCoinsPerReferral,
-  setCoinsPerReferral,
-  getBotPriceCoins,
-  setBotPriceCoins,
-} = require('./settings');
+const { getRwcoinPerReferral, setRwcoinPerReferral } = require('./settings');
 const { getOverallStatistics, formatOverallStatistics } = require('./statistics');
 const { buildPayloadFromMessage, runBroadcast } = require('./broadcast');
 const { startBot, stopBot, restartBot, deleteBot, getBotInfo } = require('./botmanager');
 const { isValidChannelInput, sanitizeText } = require('./security');
 const { formatDate } = require('./functions');
-const { registerCustomTemplateFromCode, getTemplateList } = require('./templates');
+const { registerCustomTemplateFromCode, getTemplateList, setTemplatePrice } = require('./templates');
 const { createAuction, cancelAuction, getActiveAuctions } = require('./auction');
 const logger = require('./logger');
 
@@ -61,7 +54,7 @@ async function resolveUserSearch(ctx, query) {
       `Holat: ${user.isBlocked ? '🚫 Bloklangan' : '✅ Faol'}\n` +
       `🤖 Botlar: ${botsCount}\n` +
       `👥 Referallar: ${user.referralsCount}\n` +
-      `🎁 Kreditlar: ${user.freeBotCredits}\n` +
+      `🪙 RWcoin: ${user.rwcoin}\n` +
       `📅 Ro'yxatdan o'tgan: ${formatDate(user.createdAt)}`,
     confirmInline(`blockuser_${user.telegramId}`, `unblockuser_${user.telegramId}`)
   );
@@ -181,71 +174,67 @@ async function executeBroadcast(ctx) {
   }
 }
 
-// ===================== SOZLAMALAR (referal soni) =====================
+// ===================== RWCOIN SOZLAMALARI =====================
 
-async function showAdminSettings(ctx) {
-  const required = await getReferralRequired();
-  setState(SCOPE, ctx.from.id, 'awaiting_referral_count', {});
+async function showRwcoinSettings(ctx) {
+  const rwcoinPerReferral = await getRwcoinPerReferral();
+  setState(SCOPE, ctx.from.id, 'awaiting_rwcoin_per_referral', {});
   await ctx.reply(
-    `⚙️ Hozirgi referal talabi: ${required} ta referal = 1 ta bot.\n\nYangi qiymat kiriting (faqat raqam):`,
+    `💰 RWcoin sozlamalari\n\n` +
+      `Hozirgi: 1 referal = ${rwcoinPerReferral} RWcoin\n\n` +
+      `Yangi "1 referal uchun RWcoin" qiymatini kiriting (faqat raqam):`,
     cancelKeyboard
   );
 }
 
-async function handleReferralCountInput(ctx) {
-  const text = sanitizeText(ctx.message.text || '');
-  const num = parseInt(text, 10);
-  if (Number.isNaN(num) || num < 1) {
-    return ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
-  }
-  await setReferralRequired(num);
-  clearState(SCOPE, ctx.from.id);
-  await ctx.reply(`✅ Referal talabi yangilandi: ${num} ta referal = 1 ta bot.`, adminMenu);
-}
-
-// ===================== KOIN SOZLAMALARI =====================
-
-async function showCoinSettings(ctx) {
-  const coinsPerReferral = await getCoinsPerReferral();
-  const botPrice = await getBotPriceCoins();
-  setState(SCOPE, ctx.from.id, 'awaiting_coins_per_referral', {});
-  await ctx.reply(
-    `🪙 Koin sozlamalari\n\n` +
-      `Hozirgi: 1 referal = ${coinsPerReferral} koin\n` +
-      `Bot narxi: ${botPrice} koin\n\n` +
-      `Yangi "1 referal uchun koin" qiymatini kiriting (faqat raqam):`,
-    cancelKeyboard
-  );
-}
-
-async function handleCoinsPerReferralInput(ctx) {
+async function handleRwcoinPerReferralInput(ctx) {
   const text = sanitizeText(ctx.message.text || '');
   const num = parseInt(text, 10);
   if (Number.isNaN(num) || num < 0) {
     return ctx.reply('❌ Noto\'g\'ri qiymat. 0 yoki musbat raqam kiriting.');
   }
-  await setCoinsPerReferral(num);
-  setState(SCOPE, ctx.from.id, 'awaiting_bot_price_coins', {});
-  await ctx.reply(`✅ Har bir referal uchun endi ${num} koin beriladi.\n\nEndi bot narxini (koinda) kiriting:`);
+  await setRwcoinPerReferral(num);
+  clearState(SCOPE, ctx.from.id);
+  await ctx.reply(`✅ Har bir referal uchun endi ${num} RWcoin beriladi.`, adminMenu);
 }
 
-async function handleBotPriceCoinsInput(ctx) {
+// ===================== SHABLON NARXLARI (ADMIN) =====================
+// Har bir bot shablonining o'z RWcoin narxi bor. Admin shu yerdan
+// istalgan shablonning narxini o'zgartirishi mumkin.
+
+async function showTemplatePrices(ctx) {
+  const templates = await getTemplateList();
+  await ctx.reply('💵 Shablon narxlari (RWcoin)\n\nNarxini o\'zgartirmoqchi bo\'lgan shablonni tanlang:', templatePriceListInline(templates));
+}
+
+async function promptTemplatePrice(ctx, templateKey) {
+  const templates = await getTemplateList();
+  const template = templates.find((t) => t.key === templateKey);
+  if (!template) return ctx.answerCbQuery('Shablon topilmadi', { show_alert: true });
+  await ctx.answerCbQuery();
+  setState(SCOPE, ctx.from.id, 'awaiting_template_price', { templateKey });
+  await ctx.editMessageText(`📦 ${template.name}\n💰 Hozirgi narx: ${template.priceRwcoin} RWcoin`);
+  await ctx.reply(`Yangi narxni kiriting (RWcoinda, faqat raqam):`, cancelKeyboard);
+}
+
+async function handleTemplatePriceInput(ctx) {
+  const state = getState(SCOPE, ctx.from.id);
   const text = sanitizeText(ctx.message.text || '');
-  const num = parseInt(text, 10);
-  if (Number.isNaN(num) || num < 1) {
-    return ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
+  const price = parseInt(text, 10);
+  if (Number.isNaN(price) || price < 0) {
+    return ctx.reply('❌ Noto\'g\'ri qiymat. 0 yoki musbat raqam kiriting.');
   }
-  await setBotPriceCoins(num);
+  await setTemplatePrice(state.data.templateKey, price);
   clearState(SCOPE, ctx.from.id);
-  await ctx.reply(`✅ Bot narxi yangilandi: ${num} koin.`, adminMenu);
+  await ctx.reply(`✅ "${state.data.templateKey}" shabloni narxi yangilandi: ${price} RWcoin.`, adminMenu);
 }
 
 // ===================== AUKSION YARATISH (ADMIN) =====================
-// Bosqichlar: sarlavha -> tavsif -> minimal stavka -> bonus (pot) koin -> davomiylik (daqiqa)
+// Bosqichlar: sarlavha -> tavsif -> minimal stavka -> bonus (pot) RWcoin -> davomiylik (daqiqa)
 
 async function startAuctionCreation(ctx) {
   setState(SCOPE, ctx.from.id, 'awaiting_auction_title', {});
-  await ctx.reply('🏆 Yangi koin auksioni yaratish\n\nAuksion sarlavhasini kiriting:', cancelKeyboard);
+  await ctx.reply('🏆 Yangi RWcoin auksioni yaratish\n\nAuksion sarlavhasini kiriting:', cancelKeyboard);
 }
 
 async function handleAuctionCreationInput(ctx) {
@@ -267,7 +256,7 @@ async function handleAuctionCreationInput(ctx) {
     case 'awaiting_auction_description': {
       updateStateData(SCOPE, ctx.from.id, { description: text === '-' ? '' : text });
       setState(SCOPE, ctx.from.id, 'awaiting_auction_min_bid');
-      await ctx.reply('🪙 Minimal stavka miqdorini kiriting (koinda, faqat raqam):');
+      await ctx.reply('💰 Minimal stavka miqdorini kiriting (RWcoinda, faqat raqam):');
       return true;
     }
     case 'awaiting_auction_min_bid': {
@@ -278,16 +267,16 @@ async function handleAuctionCreationInput(ctx) {
       }
       updateStateData(SCOPE, ctx.from.id, { minBid });
       setState(SCOPE, ctx.from.id, 'awaiting_auction_pot');
-      await ctx.reply("🎁 G'olibga beriladigan bonus koin miqdorini kiriting:");
+      await ctx.reply("🎁 G'olibga beriladigan bonus RWcoin miqdorini kiriting:");
       return true;
     }
     case 'awaiting_auction_pot': {
-      const potCoins = parseInt(text, 10);
-      if (Number.isNaN(potCoins) || potCoins < 1) {
+      const potRwcoin = parseInt(text, 10);
+      if (Number.isNaN(potRwcoin) || potRwcoin < 1) {
         await ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
         return true;
       }
-      updateStateData(SCOPE, ctx.from.id, { potCoins });
+      updateStateData(SCOPE, ctx.from.id, { potRwcoin });
       setState(SCOPE, ctx.from.id, 'awaiting_auction_duration');
       await ctx.reply('⏱ Auksion necha daqiqa davom etsin?');
       return true;
@@ -304,7 +293,7 @@ async function handleAuctionCreationInput(ctx) {
           title: data.title,
           description: data.description,
           minBid: data.minBid,
-          potCoins: data.potCoins,
+          potRwcoin: data.potRwcoin,
           durationMinutes,
           createdBy: ctx.from.id,
         });
@@ -312,8 +301,8 @@ async function handleAuctionCreationInput(ctx) {
         await ctx.reply(
           `✅ Auksion yaratildi!\n\n` +
             `🏆 ${auction.title}\n` +
-            `🪙 Minimal stavka: ${auction.minBid}\n` +
-            `🎁 Bonus: ${auction.potCoins} koin\n` +
+            `💰 Minimal stavka: ${auction.minBid}\n` +
+            `🎁 Bonus: ${auction.potRwcoin} RWcoin\n` +
             `⏱ Tugash vaqti: ${formatDate(auction.endsAt)}\n\n` +
             `Foydalanuvchilar "🏆 Auksion" bo'limidan ishtirok etishlari mumkin.`,
           adminMenu
@@ -335,8 +324,8 @@ async function handleAuctionCreationInput(ctx) {
 // (va shu orqali "Bot yaratish -> Shablon tanlash" botlar qatoriga) qo'shiladi.
 
 async function showTemplateUploadPrompt(ctx) {
-  const templates = getTemplateList();
-  const lines = templates.map((t) => `• ${t.name} (${t.key})`);
+  const templates = await getTemplateList();
+  const lines = templates.map((t) => `• ${t.name} (${t.key}) — 💰${t.priceRwcoin} RWcoin`);
   setState(SCOPE, ctx.from.id, 'awaiting_template_file', {});
   await ctx.reply(
     `🧩 Maxsus shablon yuklash\n\n` +
@@ -446,11 +435,11 @@ module.exports = {
   handleBroadcastContent,
   handleBroadcastButtonsAndConfirm,
   executeBroadcast,
-  showAdminSettings,
-  handleReferralCountInput,
-  showCoinSettings,
-  handleCoinsPerReferralInput,
-  handleBotPriceCoinsInput,
+  showRwcoinSettings,
+  handleRwcoinPerReferralInput,
+  showTemplatePrices,
+  promptTemplatePrice,
+  handleTemplatePriceInput,
   startAuctionCreation,
   handleAuctionCreationInput,
   showTemplateUploadPrompt,
