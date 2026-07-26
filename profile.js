@@ -18,7 +18,7 @@ async function renderProfile(telegramId) {
     `🤖 Botlar soni: ${totalBots}\n` +
     `🟢 Faol botlar: ${activeBots}\n` +
     `👥 Referallar soni: ${user.referralsCount}\n` +
-    `🎁 Bepul bot kreditlari: ${user.freeBotCredits}\n` +
+    `🪙 RWcoin balansi: ${user.rwcoin}\n` +
     `📅 Ro'yxatdan o'tgan sana: ${formatDate(user.createdAt)}`
   );
 }
