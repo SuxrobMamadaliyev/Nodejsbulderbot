@@ -2,7 +2,7 @@ const { Telegraf } = require('telegraf');
 const config = require('./config');
 const logger = require('./logger');
 
-const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline } = require('./buttons');
+const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode } = require('./functions');
@@ -10,8 +10,9 @@ const { registerReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
 const { getOverallStatistics, formatOverallStatistics, incrementDailyStat } = require('./statistics');
-const { getActiveAuctions, getAuctionById, placeBid } = require('./auction');
+const { getActiveAuctions, getAuctionById, placeBid, createAuction, MIN_USER_AUCTION_BID, renderChannelAuctionText } = require('./auction');
 const { Bot } = require('./database');
+const { Markup } = require('telegraf');
 
 const {
   rateLimitMiddleware,
@@ -24,7 +25,7 @@ const {
 
 const builder = require('./builder');
 const admin = require('./admin');
-const { getState, clearState } = require('./states');
+const { getState, clearState, setState } = require('./states');
 
 const bot = new Telegraf(config.botToken);
 
@@ -182,10 +183,14 @@ bot.hears('💰 RWcoin', async (ctx) => {
 
 bot.hears('🏆 Auksion', async (ctx) => {
   const auctions = await getActiveAuctions();
+  const startButton = Markup.inlineKeyboard([
+    [Markup.button.callback('⭐ O\'z auksionimni boshlash', 'start_own_auction')],
+  ]);
   if (!auctions.length) {
-    return ctx.reply('🏆 Hozircha faol auksionlar mavjud emas.');
+    return ctx.reply('🏆 Hozircha faol auksionlar mavjud emas.\n\nO\'zingiz auksion boshlashni xohlaysizmi?', startButton);
   }
   await ctx.reply(`🏆 Faol auksionlar (${auctions.length}):`, auctionListInline(auctions));
+  await ctx.reply('O\'zingiz ham auksion boshlashingiz mumkin:', startButton);
 });
 
 async function renderAuctionDetail(auction) {
@@ -226,10 +231,85 @@ bot.action(/auction_bid_(.+)/, async (ctx) => {
     return ctx.answerCbQuery('Auksion faol emas', { show_alert: true });
   }
   await ctx.answerCbQuery();
-  const { setState } = require('./states');
   setState(AUCTION_SCOPE, ctx.from.id, 'awaiting_bid_amount', { auctionId });
   const minRequired = Math.max(auction.minBid, auction.currentBid + 1);
   await ctx.reply(`💰 Stavkangizni kiriting (RWcoinda). Minimal: ${minRequired}`);
+});
+
+// ===================== FOYDALANUVCHI O'Z AUKSIONINI BOSHLAYDI =====================
+// Har qanday foydalanuvchi kamida MIN_USER_AUCTION_BID RWcoin bilan auksion
+// boshlashi mumkin. Auksion "🏆 Auksion" bo'limida ham, sozlangan bo'lsa
+// AUCTION_CHANNEL_ID kanalida jonli e'lon sifatida ham ko'rinadi.
+
+const USER_AUCTION_SCOPE = 'user_auction';
+const USER_AUCTION_DURATION_MINUTES = 12 * 60; // 12 soat, rasmdagi namunaga mos
+const USER_AUCTION_BONUS_PERCENT = 0.05; // g'olibga qo'shimcha bonus (garovning 5%i)
+
+async function postAuctionToChannel(ctx, auction) {
+  if (!config.auctionChannelId) return;
+  try {
+    const me = await ctx.telegram.getMe();
+    const sent = await ctx.telegram.sendMessage(
+      config.auctionChannelId,
+      renderChannelAuctionText(auction),
+      channelAuctionInline(auction, me.username)
+    );
+    auction.channelMessageId = sent.message_id;
+    await auction.save();
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Auksionni kanalga joylashda xatolik');
+  }
+}
+
+bot.action('start_own_auction', async (ctx) => {
+  await ctx.answerCbQuery();
+  const rwcoin = await getRwcoin(ctx.from.id);
+  if (rwcoin < MIN_USER_AUCTION_BID) {
+    return ctx.reply(`❌ Auksion boshlash uchun kamida ${MIN_USER_AUCTION_BID} RWcoin kerak. Sizda: ${rwcoin} RWcoin.`);
+  }
+  setState(USER_AUCTION_SCOPE, ctx.from.id, 'awaiting_own_garov', {});
+  await ctx.reply(
+    `⭐ Auksionni boshlash uchun garov miqdorini yuboring.\n\nKamida ${MIN_USER_AUCTION_BID} RWcoin. Balansingiz: ${rwcoin} RWcoin.`
+  );
+});
+
+bot.action(/chaucbal_(.+)/, async (ctx) => {
+  const rwcoin = await getRwcoin(ctx.from.id);
+  return ctx.answerCbQuery(`💳 Balansingiz: ${rwcoin} RWcoin`, { show_alert: true });
+});
+
+bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
+  const auctionId = ctx.match[1];
+  const amount = parseInt(ctx.match[2], 10);
+  const result = await placeBid(auctionId, ctx.from.id, amount);
+  if (!result.ok) {
+    const messages = {
+      not_found: '❌ Auksion topilmadi.',
+      ended: '❌ Auksion allaqachon tugagan.',
+      too_low: '❌ Bu stavka allaqachon eskirgan, yangilangan tugmalardan foydalaning.',
+      already_leading: '✅ Siz allaqachon yetakchisiz!',
+      no_rwcoin: '❌ RWcoiningiz yetarli emas.',
+      race_condition: '❌ Boshqa foydalanuvchi ayni damda stavka qo\'ydi, qaytadan urinib ko\'ring.',
+    };
+    return ctx.answerCbQuery(messages[result.reason] || '❌ Xatolik yuz berdi.', { show_alert: true });
+  }
+  await ctx.answerCbQuery(`✅ Stavkangiz qabul qilindi: ${amount} RWcoin!`);
+  if (result.previousBidderId) {
+    try {
+      await ctx.telegram.sendMessage(
+        result.previousBidderId,
+        `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} RWcoiningiz hisobingizga qaytarildi.`
+      );
+    } catch (err) {
+      // foydalanuvchi botni bloklagan bo'lishi mumkin
+    }
+  }
+  try {
+    const me = await ctx.telegram.getMe();
+    await ctx.editMessageText(renderChannelAuctionText(result.auction), channelAuctionInline(result.auction, me.username));
+  } catch (err) {
+    // xabar o'zgarmagan yoki tahrirlab bo'lmaydi - e'tiborsiz qoldiramiz
+  }
 });
 
 bot.hears('⚙️ Sozlamalar', async (ctx) => {
@@ -379,6 +459,44 @@ bot.on('text', async (ctx, next) => {
       } catch (err) {
         // foydalanuvchi botni bloklagan bo'lishi mumkin
       }
+    }
+    return;
+  }
+
+  // Foydalanuvchi o'z auksionini boshlash uchun garov miqdorini kiritmoqda
+  const userAuctionState = getState(USER_AUCTION_SCOPE, ctx.from.id);
+  if (userAuctionState && userAuctionState.step === 'awaiting_own_garov') {
+    const text = (ctx.message.text || '').trim();
+    if (text === '❌ Bekor qilish') {
+      clearState(USER_AUCTION_SCOPE, ctx.from.id);
+      await ctx.reply('❌ Bekor qilindi.', mainMenu);
+      return;
+    }
+    const garov = parseInt(text, 10);
+    if (Number.isNaN(garov) || garov < MIN_USER_AUCTION_BID) {
+      await ctx.reply(`❌ Noto'g'ri miqdor. Kamida ${MIN_USER_AUCTION_BID} RWcoin kiriting.`);
+      return;
+    }
+    clearState(USER_AUCTION_SCOPE, ctx.from.id);
+    try {
+      const auction = await createAuction({
+        title: `${ctx.from.first_name || 'Foydalanuvchi'} auksioni`,
+        description: '',
+        minBid: MIN_USER_AUCTION_BID,
+        potRwcoin: Math.max(1, Math.round(garov * USER_AUCTION_BONUS_PERCENT)),
+        durationMinutes: USER_AUCTION_DURATION_MINUTES,
+        createdBy: ctx.from.id,
+        startBid: garov,
+      });
+      await ctx.reply(
+        `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Davomiyligi: 12 soat\n\n` +
+          `${config.auctionChannelId ? 'Auksion kanalga e\'lon qilindi.' : 'Auksion "🏆 Auksion" bo\'limida ko\'rinadi.'}`,
+        mainMenu
+      );
+      await postAuctionToChannel(ctx, auction);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'Foydalanuvchi auksionini yaratishda xatolik');
+      await ctx.reply('❌ RWcoiningiz yetarli emas yoki xatolik yuz berdi.', mainMenu);
     }
     return;
   }
