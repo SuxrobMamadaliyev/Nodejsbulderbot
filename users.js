@@ -67,48 +67,36 @@ async function searchUser(query) {
   return User.findOne({ username: query.replace('@', '') });
 }
 
-async function grantFreeBotCredit(telegramId, amount = 1) {
-  return User.updateOne({ telegramId }, { $inc: { freeBotCredits: amount } });
-}
-
-async function consumeFreeBotCredit(telegramId) {
-  const user = await User.findOne({ telegramId });
-  if (!user || user.freeBotCredits < 1) return false;
-  user.freeBotCredits -= 1;
-  await user.save();
-  return true;
-}
-
 async function getAllActiveUserIds() {
   const users = await User.find({ isBlocked: false }, { telegramId: 1 }).lean();
   return users.map((u) => u.telegramId);
 }
 
-// ===================== COIN (KOIN) BALANSI =====================
+// ===================== RWCOIN BALANSI =====================
 
-async function getCoins(telegramId) {
-  const user = await User.findOne({ telegramId }, { coins: 1 });
-  return user ? user.coins : 0;
+async function getRwcoin(telegramId) {
+  const user = await User.findOne({ telegramId }, { rwcoin: 1 });
+  return user ? user.rwcoin : 0;
 }
 
-async function addCoins(telegramId, amount) {
+async function addRwcoin(telegramId, amount) {
   if (!amount) return null;
   return User.findOneAndUpdate(
     { telegramId },
-    { $inc: { coins: amount } },
+    { $inc: { rwcoin: amount } },
     { new: true }
   );
 }
 
 /**
- * Foydalanuvchi hisobidan koin yechib oladi. Agar mablag' yetarli bo'lmasa false qaytaradi
+ * Foydalanuvchi hisobidan RWcoin yechib oladi. Agar mablag' yetarli bo'lmasa false qaytaradi
  * va hisobga tegmaydi (atomik shart bilan).
  */
-async function spendCoins(telegramId, amount) {
+async function spendRwcoin(telegramId, amount) {
   if (!amount || amount <= 0) return true;
   const result = await User.updateOne(
-    { telegramId, coins: { $gte: amount } },
-    { $inc: { coins: -amount } }
+    { telegramId, rwcoin: { $gte: amount } },
+    { $inc: { rwcoin: -amount } }
   );
   return result.modifiedCount > 0;
 }
@@ -121,10 +109,8 @@ module.exports = {
   isUserBlocked,
   getUsersPaginated,
   searchUser,
-  grantFreeBotCredit,
-  consumeFreeBotCredit,
   getAllActiveUserIds,
-  getCoins,
-  addCoins,
-  spendCoins,
+  getRwcoin,
+  addRwcoin,
+  spendRwcoin,
 };
