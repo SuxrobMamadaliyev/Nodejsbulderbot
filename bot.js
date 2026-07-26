@@ -261,6 +261,9 @@ bot.hears('⬅️ Asosiy menyu', async (ctx) => ctx.reply('Asosiy menyu:', mainM
 bot.hears('👥 Foydalanuvchilar', adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, 1));
 bot.hears('🤖 Botlar', adminOnlyMiddleware(), admin.showAllBots);
 bot.hears('📢 Kanallar', adminOnlyMiddleware(), admin.showChannels);
+bot.action(/delchannel_(.+)/, adminOnlyMiddleware(), async (ctx) => {
+  return admin.handleDeleteChannel(ctx, ctx.match[1]);
+});
 bot.hears('🔗 Referallar', adminOnlyMiddleware(), async (ctx) => {
   const { getTopReferrers } = require('./referral');
   const top = await getTopReferrers(10);
