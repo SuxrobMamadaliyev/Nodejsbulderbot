@@ -1,7 +1,7 @@
 const { User, Referral } = require('./database');
 const { buildReferralLink } = require('./functions');
-const { getReferralRequired, getBotsPerReferralBatch, getCoinsPerReferral } = require('./settings');
-const { grantFreeBotCredit, addCoins } = require('./users');
+const { getRwcoinPerReferral } = require('./settings');
+const { addRwcoin } = require('./users');
 const logger = require('./logger');
 
 /**
@@ -10,6 +10,9 @@ const logger = require('./logger');
  * - /start orqali kirgan
  * - barcha kanallarga obuna (chaqiruvchi joyda tekshiriladi va isSubscribed=true bo'lgandagina chaqiriladi)
  * - oldin referal bo'lmagan (referredBy hali null bo'lishi kerak)
+ *
+ * Har bir hisoblangan referal uchun chaqiruvchiga RWcoin beriladi.
+ * Botlar FAQAT RWcoin orqali sotib olinadi - "N ta referal = 1 bepul bot" tizimi olib tashlangan.
  */
 async function registerReferral(referrerCode, newUser) {
   if (!referrerCode) return { counted: false, reason: 'no_code' };
@@ -28,44 +31,30 @@ async function registerReferral(referrerCode, newUser) {
   newUser.referredBy = referrer.telegramId;
   await Promise.all([referrer.save(), newUser.save()]);
 
-  // Har bir referal uchun koin beriladi - koinlar auksionda ishtirok etish
+  // Har bir referal uchun RWcoin beriladi - RWcoin auksionda ishtirok etish
   // yoki to'g'ridan-to'g'ri bot sotib olish uchun ishlatiladi.
-  const coinsPerReferral = await getCoinsPerReferral();
-  if (coinsPerReferral > 0) {
-    await addCoins(referrer.telegramId, coinsPerReferral);
-  }
-
-  const required = await getReferralRequired();
-  let creditGranted = false;
-  if (required > 0 && referrer.referralsCount % required === 0) {
-    const batch = await getBotsPerReferralBatch();
-    await grantFreeBotCredit(referrer.telegramId, batch);
-    creditGranted = true;
+  const rwcoinPerReferral = await getRwcoinPerReferral();
+  if (rwcoinPerReferral > 0) {
+    await addRwcoin(referrer.telegramId, rwcoinPerReferral);
   }
 
   logger.info(
-    { referrer: referrer.telegramId, referred: newUser.telegramId, coinsPerReferral },
+    { referrer: referrer.telegramId, referred: newUser.telegramId, rwcoinPerReferral },
     'Referal muvaffaqiyatli hisoblandi'
   );
 
-  return { counted: true, referrer, creditGranted, coinsGranted: coinsPerReferral };
+  return { counted: true, referrer, rwcoinGranted: rwcoinPerReferral };
 }
 
 async function getReferralInfo(telegramId, botUsername) {
   const user = await User.findOne({ telegramId });
   if (!user) return null;
-  const required = await getReferralRequired();
-  const remainder = required > 0 ? user.referralsCount % required : 0;
-  const remaining = required > 0 ? required - remainder : 0;
-  const coinsPerReferral = await getCoinsPerReferral();
+  const rwcoinPerReferral = await getRwcoinPerReferral();
   return {
     link: buildReferralLink(botUsername, user.referralCode),
     referralsCount: user.referralsCount,
-    freeBotCredits: user.freeBotCredits,
-    coins: user.coins,
-    coinsPerReferral,
-    required,
-    remaining: remaining === required ? 0 : remaining,
+    rwcoin: user.rwcoin,
+    rwcoinPerReferral,
   };
 }
 
