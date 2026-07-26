@@ -44,8 +44,8 @@ function scheduleLogCleanup() {
 }
 
 /**
- * Har daqiqada muddati tugagan koin auksionlarini yopadi va
- * g'olibga xabar yuborib, koinlarini hisobiga qo'shadi.
+ * Har daqiqada muddati tugagan RWcoin auksionlarini yopadi va
+ * g'olibga xabar yuborib, RWcoinlarini hisobiga qo'shadi.
  */
 function scheduleAuctionClosing() {
   cron.schedule('* * * * *', async () => {
@@ -56,7 +56,7 @@ function scheduleAuctionClosing() {
         await bot.telegram.sendMessage(
           winnerId,
           `🏆 Tabriklaymiz! "${auction.title}" auksionida g'olib bo'ldingiz!\n\n` +
-            `💰 Hisobingizga ${payout} koin qo'shildi (stavka + bonus).`
+            `💰 Hisobingizga ${payout} RWcoin qo'shildi (stavka + bonus).`
         );
       });
       if (closedCount) {
