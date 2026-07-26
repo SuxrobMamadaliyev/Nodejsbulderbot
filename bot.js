@@ -4,13 +4,12 @@ const logger = require('./logger');
 
 const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
-const { findOrCreateUser, getCoins } = require('./users');
+const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode } = require('./functions');
 const { registerReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
 const { getOverallStatistics, formatOverallStatistics, incrementDailyStat } = require('./statistics');
-const { getBotPriceCoins } = require('./settings');
 const { getActiveAuctions, getAuctionById, placeBid } = require('./auction');
 const { Bot } = require('./database');
 
@@ -60,11 +59,11 @@ bot.start(async (ctx) => {
       const result = await registerReferral(referralCode, user);
       if (result.counted) {
         await incrementDailyStat('newReferrals', 1);
-        if (result.creditGranted) {
+        if (result.rwcoinGranted) {
           try {
             await ctx.telegram.sendMessage(
               result.referrer.telegramId,
-              '🎉 Tabriklaymiz! Siz yetarli miqdorda referal to\'pladingiz va bepul bot yaratish huquqiga ega bo\'ldingiz!'
+              `🎉 Yangi referal! Hisobingizga ${result.rwcoinGranted} RWcoin qo'shildi.`
             );
           } catch (err) {
             // foydalanuvchi botni bloklagan bo'lishi mumkin
@@ -76,7 +75,8 @@ bot.start(async (ctx) => {
 
   await ctx.reply(
     `👋 Xush kelibsiz, ${ctx.from.first_name}!\n\n` +
-      `Bu yerda siz o'z Telegram botingizni mutlaqo bepul yaratishingiz mumkin.\n` +
+      `Bu yerda siz o'z Telegram botingizni RWcoin evaziga yaratishingiz mumkin.\n` +
+      `RWcoinni referal orqali yig'ing yoki auksionda ko'paytiring!\n` +
       `Boshlash uchun quyidagi menyudan foydalaning 👇`,
     mainMenu
   );
@@ -151,10 +151,10 @@ bot.hears('👥 Referallar', async (ctx) => {
     `👥 Referal ma'lumotlari\n\n` +
       `🔗 Sizning referal havolangiz:\n${info.link}\n\n` +
       `👤 Jami referallar: ${info.referralsCount}\n` +
-      `🎯 Talab qilinadigan referal: ${info.required}\n` +
-      `⏳ Keyingi bot uchun qoldi: ${info.remaining || info.required}\n` +
-      `🎁 Bepul bot kreditlari: ${info.freeBotCredits}`,
-    referralShareInline(info.link, '🤖 Bepul Telegram bot yaratish uchun shu havoladan foydalaning!')
+      `💰 Har bir referal uchun: ${info.rwcoinPerReferral} RWcoin\n` +
+      `🪙 Hozirgi RWcoin balansingiz: ${info.rwcoin}\n\n` +
+      `Yig'gan RWcoiningiz bilan "🤖 Bot yaratish" bo'limida bot sotib olishingiz mumkin!`,
+    referralShareInline(info.link, '🤖 RWcoin yig\'ish uchun shu havoladan foydalaning!')
   );
 });
 
@@ -163,19 +163,18 @@ bot.hears('📊 Profil', async (ctx) => {
   await ctx.reply(text);
 });
 
-// ===================== KOIN =====================
+// ===================== RWCOIN =====================
 
-bot.hears('🪙 Koinlarim', async (ctx) => {
-  const coins = await getCoins(ctx.from.id);
-  const botPrice = await getBotPriceCoins();
+bot.hears('💰 RWcoin', async (ctx) => {
+  const rwcoin = await getRwcoin(ctx.from.id);
   const me = await ctx.telegram.getMe();
   const info = await getReferralInfo(ctx.from.id, me.username);
   await ctx.reply(
-    `🪙 Koin balansingiz: ${coins}\n\n` +
-      `👥 Har bir referal uchun: ${info ? info.coinsPerReferral : '-'} koin olasiz.\n` +
-      `🤖 Bot narxi: ${botPrice} koin (bot yaratishda referal krediti bo'lmasa, koin bilan sotib olishingiz mumkin).\n` +
-      `🏆 Koiningizni ko'paytirish uchun "🏆 Auksion" bo'limiga o'ting!`,
-    info ? referralShareInline(info.link, '🪙 Koin yig\'ish uchun shu havoladan foydalaning!') : undefined
+    `🪙 RWcoin balansingiz: ${rwcoin}\n\n` +
+      `👥 Har bir referal uchun: ${info ? info.rwcoinPerReferral : '-'} RWcoin olasiz.\n` +
+      `🤖 Botlar faqat RWcoin evaziga sotib olinadi - har bir bot turining o'z narxi bor ("🤖 Bot yaratish" bo'limida ko'rasiz).\n` +
+      `🏆 RWcoiningizni ko'paytirish uchun "🏆 Auksion" bo'limiga o'ting!`,
+    info ? referralShareInline(info.link, '🪙 RWcoin yig\'ish uchun shu havoladan foydalaning!') : undefined
   );
 });
 
@@ -195,8 +194,8 @@ async function renderAuctionDetail(auction) {
   return (
     `🏆 ${auction.title}\n` +
     `${auction.description ? `📝 ${auction.description}\n` : ''}` +
-    `🪙 Joriy stavka: ${auction.currentBid || auction.minBid}\n` +
-    `🎁 G'olibga bonus: +${auction.potCoins} koin\n` +
+    `💰 Joriy stavka: ${auction.currentBid || auction.minBid}\n` +
+    `🎁 G'olibga bonus: +${auction.potRwcoin} RWcoin\n` +
     `⏱ Tugashiga: ${minutesLeft} daqiqa\n\n` +
     `Kimda eng yuqori stavka bo'lsa, auksion tugaganda o'z stavkasi + bonusni oladi!`
   );
@@ -230,7 +229,7 @@ bot.action(/auction_bid_(.+)/, async (ctx) => {
   const { setState } = require('./states');
   setState(AUCTION_SCOPE, ctx.from.id, 'awaiting_bid_amount', { auctionId });
   const minRequired = Math.max(auction.minBid, auction.currentBid + 1);
-  await ctx.reply(`💰 Stavkangizni kiriting (koinda). Minimal: ${minRequired}`);
+  await ctx.reply(`💰 Stavkangizni kiriting (RWcoinda). Minimal: ${minRequired}`);
 });
 
 bot.hears('⚙️ Sozlamalar', async (ctx) => {
@@ -242,9 +241,11 @@ bot.hears('⚙️ Sozlamalar', async (ctx) => {
 bot.hears('🆘 Yordam', async (ctx) => {
   await ctx.reply(
     '🆘 Yordam\n\n' +
-      '🤖 Bot yaratish — @BotFather orqali olingan token yordamida yangi bot yaratasiz.\n' +
+      '🤖 Bot yaratish — RWcoin evaziga @BotFather orqali olingan token yordamida yangi bot yaratasiz.\n' +
       '📂 Mening botlarim — botlaringizni boshqarasiz (ishga tushirish/to\'xtatish/o\'chirish).\n' +
-      '👥 Referallar — do\'stlaringizni taklif qilib bepul bot yaratish huquqini olasiz.\n' +
+      '👥 Referallar — do\'stlaringizni taklif qilib RWcoin yig\'asiz.\n' +
+      '💰 RWcoin — balansingiz va RWcoin yig\'ish yo\'llari.\n' +
+      '🏆 Auksion — stavka qo\'yib RWcoiningizni ko\'paytirasiz.\n' +
       '📊 Profil — hisobingiz haqida ma\'lumot.\n\n' +
       'Savollar bo\'lsa, administratorga murojaat qiling.'
   );
@@ -274,9 +275,11 @@ bot.hears('📊 Statistika', adminOnlyMiddleware(), async (ctx) => {
 });
 bot.hears('📜 Loglar', adminOnlyMiddleware(), admin.showRecentLogs);
 bot.hears('🧩 Shablon yuklash', adminOnlyMiddleware(), admin.showTemplateUploadPrompt);
-bot.hears('⚙️ Referal sozlamalari', adminOnlyMiddleware(), admin.showAdminSettings);
+bot.hears('💵 Shablon narxlari', adminOnlyMiddleware(), admin.showTemplatePrices);
 bot.hears('🏆 Auksion yaratish', adminOnlyMiddleware(), admin.startAuctionCreation);
-bot.hears('🪙 Koin sozlamalari', adminOnlyMiddleware(), admin.showCoinSettings);
+bot.hears('💰 RWcoin sozlamalari', adminOnlyMiddleware(), admin.showRwcoinSettings);
+
+bot.action(/setprice_(.+)/, adminOnlyMiddleware(), (ctx) => admin.promptTemplatePrice(ctx, ctx.match[1]));
 
 bot.action(/blockuser_(\d+)/, adminOnlyMiddleware(), (ctx) => admin.toggleBlockUser(ctx, Number(ctx.match[1]), true));
 bot.action(/unblockuser_(\d+)/, adminOnlyMiddleware(), (ctx) => admin.toggleBlockUser(ctx, Number(ctx.match[1]), false));
@@ -317,12 +320,10 @@ bot.on('text', async (ctx, next) => {
       case 'awaiting_user_search':
         clearState(admin.SCOPE, ctx.from.id);
         return admin.resolveUserSearch(ctx, text);
-      case 'awaiting_referral_count':
-        return admin.handleReferralCountInput(ctx);
-      case 'awaiting_coins_per_referral':
-        return admin.handleCoinsPerReferralInput(ctx);
-      case 'awaiting_bot_price_coins':
-        return admin.handleBotPriceCoinsInput(ctx);
+      case 'awaiting_rwcoin_per_referral':
+        return admin.handleRwcoinPerReferralInput(ctx);
+      case 'awaiting_template_price':
+        return admin.handleTemplatePriceInput(ctx);
       case 'awaiting_auction_title':
       case 'awaiting_auction_description':
       case 'awaiting_auction_min_bid':
@@ -359,18 +360,18 @@ bot.on('text', async (ctx, next) => {
         ended: '❌ Auksion allaqachon tugagan.',
         too_low: `❌ Stavka juda kichik. Minimal: ${result.minRequired || ''}`,
         already_leading: '✅ Siz allaqachon yetakchisiz!',
-        no_coins: '❌ Koiningiz yetarli emas.',
+        no_rwcoin: '❌ RWcoiningiz yetarli emas.',
         race_condition: '❌ Boshqa foydalanuvchi ayni damda stavka qo\'ydi, qaytadan urinib ko\'ring.',
       };
       await ctx.reply(messages[result.reason] || '❌ Xatolik yuz berdi.');
       return;
     }
-    await ctx.reply(`✅ Stavkangiz qabul qilindi: ${amount} koin! Hozircha yetakchisiz.`);
+    await ctx.reply(`✅ Stavkangiz qabul qilindi: ${amount} RWcoin! Hozircha yetakchisiz.`);
     if (result.previousBidderId) {
       try {
         await ctx.telegram.sendMessage(
           result.previousBidderId,
-          `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} koiningiz hisobingizga qaytarildi.`
+          `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} RWcoiningiz hisobingizga qaytarildi.`
         );
       } catch (err) {
         // foydalanuvchi botni bloklagan bo'lishi mumkin
