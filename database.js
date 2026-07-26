@@ -13,8 +13,7 @@ const userSchema = new mongoose.Schema(
     referredBy: { type: Number, default: null },
     referralCode: { type: String, unique: true, index: true },
     referralsCount: { type: Number, default: 0 },
-    freeBotCredits: { type: Number, default: 0 },
-    coins: { type: Number, default: 0 },
+    rwcoin: { type: Number, default: 0 },
     isBlocked: { type: Boolean, default: false },
     isAdmin: { type: Boolean, default: false },
     lastSeenAt: { type: Date, default: Date.now },
@@ -75,6 +74,7 @@ const templateSchema = new mongoose.Schema(
     code: { type: String, default: null },
     fileName: { type: String, default: null },
     addedBy: { type: Number, default: null },
+    priceRwcoin: { type: Number, default: 100 },
   },
   { timestamps: true }
 );
@@ -109,7 +109,7 @@ const auctionSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
     description: { type: String, default: '' },
-    potCoins: { type: Number, required: true }, // g'olibga qo'shimcha beriladigan koin miqdori
+    potRwcoin: { type: Number, required: true }, // g'olibga qo'shimcha beriladigan RWcoin miqdori
     minBid: { type: Number, required: true, default: 10 },
     currentBid: { type: Number, default: 0 },
     currentBidderId: { type: Number, default: null },
