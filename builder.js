@@ -1,53 +1,42 @@
 const { setState, getState, updateStateData, clearState } = require('./states');
 const { isValidBotToken, isValidBotName, isValidDescription, sanitizeText } = require('./security');
 const { createBot, startBot, verifyTokenWithTelegram } = require('./botmanager');
-const { getUserByTelegramId, consumeFreeBotCredit, spendCoins } = require('./users');
+const { getUserByTelegramId, spendRwcoin } = require('./users');
 const { getReferralInfo } = require('./referral');
-const { getBotPriceCoins } = require('./settings');
-const { listChannels, checkUserSubscription } = require('./subscription');
+const { getTemplatePrice, getTemplateList } = require('./templates');
 const { templateSelectionInline, referralShareInline, cancelKeyboard, mainMenu } = require('./buttons');
-const { getTemplateList } = require('./templates');
 const { Bot } = require('./database');
 const logger = require('./logger');
 
 const SCOPE = 'builder';
 
-async function canCreateBot(telegramId) {
-  const user = await getUserByTelegramId(telegramId);
-  if (!user) return { allowed: false, reason: 'Foydalanuvchi topilmadi' };
-  const botPrice = await getBotPriceCoins();
-  if (user.freeBotCredits >= 1) {
-    return { allowed: true, user, payWith: 'credit' };
-  }
-  if (user.coins >= botPrice) {
-    return { allowed: true, user, payWith: 'coins', botPrice };
-  }
-  return { allowed: false, reason: 'no_credits', botPrice };
-}
+// Botlar FAQAT RWcoin orqali sotib olinadi. Har bir shablonning o'z narxi bor
+// (templates.js / Template kolleksiyasi orqali admin tomonidan belgilanadi).
 
-async function replyNeedReferral(ctx, botPrice) {
+async function replyNeedRwcoin(ctx, price) {
   const me = await ctx.telegram.getMe();
   const info = await getReferralInfo(ctx.from.id, me.username);
-  const remaining = info ? info.remaining || info.required : '?';
-  const price = botPrice || (info ? undefined : undefined);
   await ctx.reply(
-    `❌ Bot yaratish uchun sizda yetarli referal krediti yoki koin yo'q.\n\n` +
-      `👥 Do'stlaringizni taklif qiling: yana ${remaining} ta referal to'plasangiz, bepul bot yaratish huquqiga ega bo'lasiz.\n` +
-      `🪙 Yoki koin to'plab, ${price || ''} koinga bot sotib olishingiz mumkin (hozirgi koiningiz: ${info ? info.coins : 0}).\n\n` +
+    `❌ Bu botni sotib olish uchun RWcoin yetarli emas.\n\n` +
+      `💰 Kerak: ${price} RWcoin\n` +
+      `🪙 Hozirgi balansingiz: ${info ? info.rwcoin : 0} RWcoin\n\n` +
+      `👥 Do'stlaringizni taklif qiling: har bir referal uchun ${info ? info.rwcoinPerReferral : '-'} RWcoin olasiz.\n` +
+      `🏆 Yoki "🏆 Auksion" bo'limida RWcoiningizni ko'paytirib olishingiz mumkin.\n\n` +
       `🔗 Sizning referal havolangiz:\n${info ? info.link : '-'}`,
-    info ? referralShareInline(info.link, '🤖 Bepul Telegram bot yaratish uchun shu havoladan foydalaning!') : undefined
+    info ? referralShareInline(info.link, '🤖 Bot sotib olish uchun RWcoin yig\'ish - shu havoladan foydalaning!') : undefined
   );
 }
 
-// Bot yaratish endi shu tartibda ishlaydi:
-// 1) Avval mavjud shablonlar (botlar turi) ro'yxati ko'rsatiladi
-// 2) Foydalanuvchi biror shablonni tanlaganda referal talabi tekshiriladi -
-//    yetarli bo'lmasa referal taklif qilinadi, yetarli bo'lsa token so'raladi
+// Bot yaratish shu tartibda ishlaydi:
+// 1) Avval mavjud bot turlari (shablonlar) ro'yxati narxlari bilan ko'rsatiladi
+// 2) Foydalanuvchi biror shablonni tanlaganda RWcoin balansi tekshiriladi -
+//    yetarli bo'lmasa RWcoin yig'ish taklif qilinadi, yetarli bo'lsa token so'raladi
 async function startBotCreation(ctx) {
   setState(SCOPE, ctx.from.id, 'awaiting_template', {});
+  const templates = await getTemplateList();
   return ctx.reply(
-    '🤖 Yangi bot yaratish\n\nQuyidagi mavjud bot turlaridan birini tanlang:',
-    templateSelectionInline(getTemplateList())
+    '🤖 Yangi bot yaratish\n\nQuyidagi mavjud bot turlaridan birini tanlang (narxlar RWcoinda ko\'rsatilgan):',
+    templateSelectionInline(templates)
   );
 }
 
@@ -123,21 +112,18 @@ async function handleTemplateSelection(ctx) {
   const templateType = ctx.match[1];
   await ctx.answerCbQuery();
 
-  const check = await canCreateBot(ctx.from.id);
-  if (!check.allowed) {
+  const user = await getUserByTelegramId(ctx.from.id);
+  const price = await getTemplatePrice(templateType);
+
+  if (!user || user.rwcoin < price) {
     clearState(SCOPE, ctx.from.id);
-    if (check.reason === 'no_credits') {
-      return replyNeedReferral(ctx, check.botPrice);
-    }
-    return ctx.reply('❌ Xatolik: ' + check.reason);
+    return replyNeedRwcoin(ctx, price);
   }
 
-  updateStateData(SCOPE, ctx.from.id, { templateType });
+  updateStateData(SCOPE, ctx.from.id, { templateType, price });
   setState(SCOPE, ctx.from.id, 'awaiting_token');
   await ctx.editMessageText(
-    `📦 Tanlangan tur: ${templateType}\n\n✅ Sizda bot yaratish huquqi bor! (${
-      check.payWith === 'coins' ? `🪙 ${check.botPrice} koin hisobidan yechiladi` : '🎁 bepul kredit hisobidan'
-    })`
+    `📦 Tanlangan tur: ${templateType}\n💰 Narxi: ${price} RWcoin\n\n✅ Balansingizda yetarli RWcoin bor!`
   );
   await ctx.reply(
     '1️⃣ Avval @BotFather orqali yangi bot yarating.\n' +
@@ -149,15 +135,13 @@ async function handleTemplateSelection(ctx) {
 
 async function finalizeBotCreation(ctx) {
   const state = getState(SCOPE, ctx.from.id);
+  const { templateType, price } = state.data;
 
-  // Navbatdagi bosqichlar davomida kredit/koin boshqa joyda sarflanmaganini yana bir bor tekshiramiz
-  const check = await canCreateBot(ctx.from.id);
-  if (!check.allowed) {
+  // Navbatdagi bosqichlar davomida RWcoin boshqa joyda sarflanmaganini yana bir bor tekshiramiz
+  const user = await getUserByTelegramId(ctx.from.id);
+  if (!user || user.rwcoin < price) {
     clearState(SCOPE, ctx.from.id);
-    if (check.reason === 'no_credits') {
-      return replyNeedReferral(ctx, check.botPrice);
-    }
-    return ctx.reply('❌ Xatolik: ' + check.reason);
+    return replyNeedRwcoin(ctx, price);
   }
 
   try {
@@ -166,19 +150,15 @@ async function finalizeBotCreation(ctx) {
       token: state.data.token,
       botName: state.data.botName,
       description: state.data.description,
-      templateType: state.data.templateType,
+      templateType,
     });
 
-    if (check.payWith === 'coins') {
-      const spent = await spendCoins(ctx.from.id, check.botPrice);
-      if (!spent) {
-        // Musobaqa holati: koin boshqa joyda sarflab bo'lingan, botni ham bekor qilamiz
-        await Bot.deleteOne({ _id: botDoc._id });
-        clearState(SCOPE, ctx.from.id);
-        return replyNeedReferral(ctx, check.botPrice);
-      }
-    } else {
-      await consumeFreeBotCredit(ctx.from.id);
+    const spent = await spendRwcoin(ctx.from.id, price);
+    if (!spent) {
+      // Musobaqa holati: RWcoin boshqa joyda sarflab bo'lingan, botni ham bekor qilamiz
+      await Bot.deleteOne({ _id: botDoc._id });
+      clearState(SCOPE, ctx.from.id);
+      return replyNeedRwcoin(ctx, price);
     }
 
     await startBot(botDoc);
@@ -189,8 +169,8 @@ async function finalizeBotCreation(ctx) {
       `🎉 Bot muvaffaqiyatli yaratildi va ishga tushirildi!\n\n` +
         `🤖 Nomi: ${botDoc.botName}\n` +
         `🔗 Username: @${botDoc.botUsername}\n` +
-        `📦 Turi: ${state.data.templateType}\n` +
-        `💳 To'lov: ${check.payWith === 'coins' ? `${check.botPrice} koin` : '1 bepul kredit'}\n\n` +
+        `📦 Turi: ${templateType}\n` +
+        `💰 To'lov: ${price} RWcoin\n\n` +
         `Botni "📂 Mening botlarim" bo'limidan boshqarishingiz mumkin.`,
       mainMenu
     );
