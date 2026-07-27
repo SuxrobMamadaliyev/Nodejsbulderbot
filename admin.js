@@ -1,6 +1,6 @@
 const { Bot, Channel, Log, Admin } = require('./database');
 const { setState, getState, updateStateData, clearState } = require('./states');
-const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline, channelListInline } = require('./buttons');
+const { adminMenu, mainMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline, channelListInline, paginationInline } = require('./buttons');
 const { getUsersPaginated, searchUser, blockUser, unblockUser } = require('./users');
 const { addChannel, removeChannel, listChannels, resolveChannelChatId } = require('./subscription');
 const { getRwcoinPerReferral, setRwcoinPerReferral } = require('./settings');
@@ -34,7 +34,16 @@ async function showUsers(ctx, page = 1) {
       } | Ref: ${u.referralsCount}`
   );
 
-  await ctx.reply(`👥 Foydalanuvchilar (${page}/${totalPages}):\n\n${lines.join('\n')}`);
+  const text = `👥 Foydalanuvchilar (${page}/${totalPages}):\n\n${lines.join('\n')}`;
+  const keyboard = totalPages > 1 ? paginationInline('usersPage', page, totalPages) : undefined;
+
+  // Agar "Keyingi/Oldingi" tugmasi bosilgan bo'lsa (callback_query), xabarni tahrirlaymiz,
+  // aks holda ("👥 Foydalanuvchilar" tugmasi bosilganda) yangi xabar yuboramiz.
+  if (ctx.updateType === 'callback_query') {
+    await ctx.answerCbQuery();
+    return ctx.editMessageText(text, keyboard);
+  }
+  return ctx.reply(text, keyboard);
 }
 
 async function handleUserSearch(ctx) {
