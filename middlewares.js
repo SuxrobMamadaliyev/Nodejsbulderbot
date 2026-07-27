@@ -49,6 +49,12 @@ function mandatorySubscriptionMiddleware() {
       return next();
     }
 
+    // Adminlar majburiy obuna tekshiruvidan ozod - aks holda admin panel
+    // (jumladan Broadcast) admin o'zi obuna bo'lmagan taqdirda ishlamay qoladi.
+    if (await isAdminUser(ctx.from.id)) {
+      return next();
+    }
+
     const channels = await listChannels({ scope: 'master' });
     if (!channels.length) return next();
 
