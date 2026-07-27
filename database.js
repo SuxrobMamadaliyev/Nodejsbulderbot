@@ -114,6 +114,7 @@ const auctionSchema = new mongoose.Schema(
     minBid: { type: Number, required: true, default: 10 },
     currentBid: { type: Number, default: 0 },
     currentBidderId: { type: Number, default: null },
+    currentBidderName: { type: String, default: null }, // liderning ismi/username - kanal postida ko'rsatish uchun
     bank: { type: Number, default: 0 }, // barcha garovlar yig'indisi - g'olib bo'lmasa qaytarilmaydi
     bidsCount: { type: Number, default: 0 }, // jami qo'yilgan garovlar soni
     channelMessageId: { type: Number, default: null }, // kanaldagi jonli e'lon xabari ID
