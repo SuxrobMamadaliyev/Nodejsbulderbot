@@ -36,6 +36,13 @@ const config = {
   defaultTemplatePriceRwcoin: parseInt(process.env.DEFAULT_TEMPLATE_PRICE_RWCOIN || '100', 10),
 
   logLevel: process.env.LOG_LEVEL || 'info',
+
+  // 🆘 Yordam bo'limidagi inline tugmalar uchun: admin/dasturchi profili va kanallar.
+  // .env faylida DEVELOPER_USERNAME, RWAUKSION_CHANNEL_USERNAME,
+  // RWBUILDERNEWS_CHANNEL_USERNAME o'zgaruvchilarini @ belgisisiz kiritish kerak.
+  developerUsername: (process.env.DEVELOPER_USERNAME || 'admin').replace(/^@/, ''),
+  auctionChannelUsername: (process.env.RWAUKSION_CHANNEL_USERNAME || 'rwauksion').replace(/^@/, ''),
+  builderNewsChannelUsername: (process.env.RWBUILDERNEWS_CHANNEL_USERNAME || 'rwbuildernews').replace(/^@/, ''),
 };
 
 module.exports = config;
