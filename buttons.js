@@ -7,6 +7,35 @@ const mainMenu = Markup.keyboard([
   ['⚙️ Sozlamalar', '🆘 Yordam'],
 ]).resize();
 
+// Asosiy menyu - endi inline tugmalar ko'rinishida (reply keyboard o'rniga).
+// isAdmin=true bo'lsa, pastiga "👨‍💻 Admin panel" tugmasi ham qo'shiladi.
+function mainMenuInline(isAdmin = false) {
+  const rows = [
+    [Markup.button.callback('🏆 Auksion', 'menu_auction')],
+    [
+      Markup.button.callback('🤖 Bot yaratish', 'menu_create_bot'),
+      Markup.button.callback('📂 Mening botlarim', 'menu_my_bots'),
+    ],
+    [
+      Markup.button.callback('👥 Referallar', 'menu_referrals'),
+      Markup.button.callback('📊 Profil', 'menu_profile'),
+    ],
+    [
+      Markup.button.callback('⚙️ Sozlamalar', 'menu_settings'),
+      Markup.button.callback('🆘 Yordam', 'menu_help'),
+    ],
+  ];
+  if (isAdmin) {
+    rows.push([Markup.button.callback('👨‍💻 Admin panel', 'menu_admin')]);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+// Har qanday ekrandan asosiy menyuga qaytish uchun kichik inline tugma.
+function backToMainMenuInline() {
+  return Markup.inlineKeyboard([[Markup.button.callback('⬅️ Asosiy menyu', 'menu_back')]]);
+}
+
 const adminMenu = Markup.keyboard([
   ['👥 Foydalanuvchilar', '🤖 Botlar'],
   ['📢 Kanallar', '🔗 Referallar'],
@@ -89,20 +118,32 @@ function channelListInline(channels) {
 // tugmalar +1 dan +10 gacha bo'lgan qiymatlarni taklif qiladi.
 // `auction._id` MongoDB ID, callback_data 64 baytdan oshmasligi kerak,
 // shuning uchun qisqa prefiks ishlatiladi.
+// Bot API 9.4 (2026-02-09) dan boshlab InlineKeyboardButton "style" maydonini
+// qo'llab-quvvatlaydi: "danger" (qizil), "primary" (ko'k), "success" (yashil).
+// Telegraf 4.16.3 hali buni maxsus parametr sifatida bilmaydi, lekin
+// Markup.button.callback oddiy {text, callback_data} obyekt qaytaradi va biz
+// unga qo'lda "style" maydonini qo'shsak, Telegram API ga to'g'ridan-to'g'ri
+// yuboriladi (telegraf noma'lum maydonlarni olib tashlamaydi).
+function styledButton(text, callbackData, style) {
+  return { ...Markup.button.callback(text, callbackData), style };
+}
+
 function channelAuctionInline(auction, botUsername) {
   const base = auction.currentBid || 0;
   const steps = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   const rows = [];
+
+  if (botUsername) {
+    rows.push([{ ...Markup.button.url('➡️ Botga qaytish', `https://t.me/${botUsername}`), style: 'primary' }]);
+  }
+  rows.push([styledButton('💳 Mening balansim', `chaucbal_${auction._id}`, 'primary')]);
+
   for (let i = 0; i < steps.length; i += 5) {
     rows.push(
       steps.slice(i, i + 5).map((step) =>
-        Markup.button.callback(`${base + step}`, `chauc_${auction._id}_${base + step}`)
+        styledButton(`${base + step}`, `chauc_${auction._id}_${base + step}`, 'success')
       )
     );
-  }
-  rows.push([Markup.button.callback('💳 Mening balansim', `chaucbal_${auction._id}`)]);
-  if (botUsername) {
-    rows.push([Markup.button.url('➡️ Botga qaytish', `https://t.me/${botUsername}`)]);
   }
   return Markup.inlineKeyboard(rows);
 }
@@ -146,6 +187,8 @@ function paginationInline(prefix, page, totalPages) {
 
 module.exports = {
   mainMenu,
+  mainMenuInline,
+  backToMainMenuInline,
   adminMenu,
   cancelKeyboard,
   backKeyboard,
