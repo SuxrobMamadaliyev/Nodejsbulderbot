@@ -66,7 +66,8 @@ function scheduleAuctionClosing() {
               config.auctionChannelId,
               auction.channelMessageId,
               undefined,
-              renderChannelAuctionText(auction, { finished: true })
+              renderChannelAuctionText(auction, { finished: true }),
+              { parse_mode: 'HTML' }
             )
             .catch(() => {});
         }
@@ -101,7 +102,7 @@ function scheduleAuctionChannelRefresh() {
             auction.channelMessageId,
             undefined,
             renderChannelAuctionText(auction),
-            channelAuctionInline(auction, me.username)
+            { parse_mode: 'HTML', ...channelAuctionInline(auction, me.username) }
           )
           .catch(() => {});
       }
