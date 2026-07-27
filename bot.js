@@ -389,7 +389,12 @@ bot.hears('🆘 Yordam', async (ctx) => {
       '💰 RWcoin — balansingiz va RWcoin yig\'ish yo\'llari.\n' +
       '🏆 Auksion — stavka qo\'yib RWcoiningizni ko\'paytirasiz.\n' +
       '📊 Profil — hisobingiz haqida ma\'lumot.\n\n' +
-      'Savollar bo\'lsa, administratorga murojaat qiling.'
+      'Savollar bo\'lsa, administratorga murojaat qiling.',
+    Markup.inlineKeyboard([
+      [Markup.button.url('👨‍💻 Admin dasturchi', `https://t.me/${config.developerUsername}`)],
+      [Markup.button.url('🏆 RW Auksion kanali', `https://t.me/${config.auctionChannelUsername}`)],
+      [Markup.button.url('📰 RW Builder News', `https://t.me/${config.builderNewsChannelUsername}`)],
+    ])
   );
 });
 
