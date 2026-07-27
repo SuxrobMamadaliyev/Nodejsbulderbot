@@ -2,7 +2,7 @@ const { Telegraf } = require('telegraf');
 const config = require('./config');
 const logger = require('./logger');
 
-const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline } = require('./buttons');
+const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode } = require('./functions');
@@ -10,7 +10,7 @@ const { registerReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
 const { getOverallStatistics, formatOverallStatistics, incrementDailyStat } = require('./statistics');
-const { getActiveAuctions, getAuctionById, placeBid, createAuction, MIN_USER_AUCTION_BID, renderChannelAuctionText } = require('./auction');
+const { getActiveAuctions, getAuctionById, placeBid, createAuction, MIN_USER_AUCTION_BID, MAX_BID_STEP, BID_EXTENSION_MINUTES, MIN_BIDS_TO_END, WINNER_PAYOUT_PERCENT, renderChannelAuctionText } = require('./auction');
 const { Bot } = require('./database');
 const { Markup } = require('telegraf');
 
@@ -181,16 +181,42 @@ bot.hears('💰 RWcoin', async (ctx) => {
 
 // ===================== AUKSION =====================
 
+const AUCTION_RULES_TEXT =
+  `👨‍⚖️ Auksion qoidalari:\n` +
+  `⚜️ Auksionni ${MIN_USER_AUCTION_BID} RWcoindan boshlashingiz mumkin.\n` +
+  `⚜️ Auksion ${MIN_BIDS_TO_END} ta garovga yetganda tugashi mumkin.\n` +
+  `⚜️ Har qanday ishtirokchi oldingi garovni oshirishi mumkin.\n` +
+  `⚜️ Maksimal o'sish bosqichi - ${MAX_BID_STEP} RWcoin.\n` +
+  `⚜️ Garov ko'tarilgandan so'ng, auksion ${BID_EXTENSION_MINUTES} daqiqaga uzaytiriladi.\n` +
+  `⚜️ Taymer nolga yetganda, oxirgi garovchi g'olib bo'ladi.\n` +
+  `⚜️ Foydalanuvchi ketma-ket pul tika olmaydi.\n` +
+  `⚜️ G'olib bankdan ${Math.round(WINNER_PAYOUT_PERCENT * 100)}% oladi.`;
+
+// Auksion kanaliga havola quramiz: @username bo'lsa to'g'ridan-to'g'ri,
+// bo'lmasa kanalning taklif havolasini so'raymiz.
+async function getAuctionChannelUrl(telegram) {
+  if (!config.auctionChannelId) return null;
+  try {
+    const chat = await telegram.getChat(config.auctionChannelId);
+    if (chat.username) return `https://t.me/${chat.username}`;
+    if (chat.invite_link) return chat.invite_link;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Auksion kanal linkini olishda xatolik');
+  }
+  return null;
+}
+
 bot.hears('🏆 Auksion', async (ctx) => {
   const auctions = await getActiveAuctions();
-  const startButton = Markup.inlineKeyboard([
-    [Markup.button.callback('⭐ O\'z auksionimni boshlash', 'start_own_auction')],
-  ]);
+  const channelUrl = await getAuctionChannelUrl(ctx.telegram);
   if (!auctions.length) {
-    return ctx.reply('🏆 Hozircha faol auksionlar mavjud emas.\n\nO\'zingiz auksion boshlashni xohlaysizmi?', startButton);
+    return ctx.reply(`${AUCTION_RULES_TEXT}\n\n⚪ Auksion hozirda faol emas.`, auctionInactiveInline(channelUrl));
   }
-  await ctx.reply(`🏆 Faol auksionlar (${auctions.length}):`, auctionListInline(auctions));
-  await ctx.reply('O\'zingiz ham auksion boshlashingiz mumkin:', startButton);
+  const keyboard = channelUrl ? Markup.inlineKeyboard([[Markup.button.url('📢 Auksion kanalimiz', channelUrl)]]) : undefined;
+  await ctx.reply(
+    `${AUCTION_RULES_TEXT}\n\n🟢 Hozir auksion faol! Ishtirok etish uchun auksion kanaliga o'ting.`,
+    keyboard
+  );
 });
 
 async function renderAuctionDetail(auction) {
@@ -199,10 +225,10 @@ async function renderAuctionDetail(auction) {
   return (
     `🏆 ${auction.title}\n` +
     `${auction.description ? `📝 ${auction.description}\n` : ''}` +
-    `💰 Joriy stavka: ${auction.currentBid || auction.minBid}\n` +
-    `🎁 G'olibga bonus: +${auction.potRwcoin} RWcoin\n` +
+    `💰 Joriy stavka: ${auction.currentBid || auction.minBid} RWcoin\n` +
+    `🏦 Auksion banki: ${auction.bank} RWcoin\n` +
     `⏱ Tugashiga: ${minutesLeft} daqiqa\n\n` +
-    `Kimda eng yuqori stavka bo'lsa, auksion tugaganda o'z stavkasi + bonusni oladi!`
+    `Auksion tugaganda oxirgi garovchi g'olib bo'ladi va bankning ${Math.round(WINNER_PAYOUT_PERCENT * 100)}%ini oladi. Boshqa ishtirokchilarning coinlari qaytarilmaydi!`
   );
 }
 
@@ -242,8 +268,7 @@ bot.action(/auction_bid_(.+)/, async (ctx) => {
 // AUCTION_CHANNEL_ID kanalida jonli e'lon sifatida ham ko'rinadi.
 
 const USER_AUCTION_SCOPE = 'user_auction';
-const USER_AUCTION_DURATION_MINUTES = 12 * 60; // 12 soat, rasmdagi namunaga mos
-const USER_AUCTION_BONUS_PERCENT = 0.05; // g'olibga qo'shimcha bonus (garovning 5%i)
+const USER_AUCTION_DURATION_MINUTES = BID_EXTENSION_MINUTES; // 10 daqiqa - har garovdan so'ng yana shuncha uzayadi
 
 async function postAuctionToChannel(ctx, auction) {
   if (!config.auctionChannelId) return;
@@ -263,6 +288,14 @@ async function postAuctionToChannel(ctx, auction) {
 
 bot.action('start_own_auction', async (ctx) => {
   await ctx.answerCbQuery();
+  const activeAuctions = await getActiveAuctions();
+  if (activeAuctions.length) {
+    const channelUrl = await getAuctionChannelUrl(ctx.telegram);
+    return ctx.reply(
+      '⚪ Hozir allaqachon faol auksion bor. Iltimos, u tugashini kuting yoki unga qo\'shiling.',
+      channelUrl ? Markup.inlineKeyboard([[Markup.button.url('📢 Auksion kanalimiz', channelUrl)]]) : undefined
+    );
+  }
   const rwcoin = await getRwcoin(ctx.from.id);
   if (rwcoin < MIN_USER_AUCTION_BID) {
     return ctx.reply(`❌ Auksion boshlash uchun kamida ${MIN_USER_AUCTION_BID} RWcoin kerak. Sizda: ${rwcoin} RWcoin.`);
@@ -287,7 +320,8 @@ bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
       not_found: '❌ Auksion topilmadi.',
       ended: '❌ Auksion allaqachon tugagan.',
       too_low: '❌ Bu stavka allaqachon eskirgan, yangilangan tugmalardan foydalaning.',
-      already_leading: '✅ Siz allaqachon yetakchisiz!',
+      too_high: `❌ Bir martada ko'pi bilan ${MAX_BID_STEP} RWcoinga oshirish mumkin.`,
+      already_leading: '⚠️ Siz allaqachon yetakchisiz, ketma-ket ikki marta stavka qo\'ya olmaysiz.',
       no_rwcoin: '❌ RWcoiningiz yetarli emas.',
       race_condition: '❌ Boshqa foydalanuvchi ayni damda stavka qo\'ydi, qaytadan urinib ko\'ring.',
     };
@@ -298,7 +332,7 @@ bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
     try {
       await ctx.telegram.sendMessage(
         result.previousBidderId,
-        `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} RWcoiningiz hisobingizga qaytarildi.`
+        `⚠️ Sizning auksiondagi stavkangiz (${result.previousBid} RWcoin) oshirib yuborildi. Diqqat: qoidaga ko'ra bu RWcoin qaytarilmaydi - xohlasangiz qayta stavka qo'ying!`
       );
     } catch (err) {
       // foydalanuvchi botni bloklagan bo'lishi mumkin
@@ -410,7 +444,6 @@ bot.on('text', async (ctx, next) => {
       case 'awaiting_auction_title':
       case 'awaiting_auction_description':
       case 'awaiting_auction_min_bid':
-      case 'awaiting_auction_pot':
       case 'awaiting_auction_duration':
         return admin.handleAuctionCreationInput(ctx);
       default:
@@ -442,7 +475,8 @@ bot.on('text', async (ctx, next) => {
         not_found: '❌ Auksion topilmadi.',
         ended: '❌ Auksion allaqachon tugagan.',
         too_low: `❌ Stavka juda kichik. Minimal: ${result.minRequired || ''}`,
-        already_leading: '✅ Siz allaqachon yetakchisiz!',
+        too_high: `❌ Bir martada ko'pi bilan ${MAX_BID_STEP} RWcoinga oshirish mumkin.`,
+        already_leading: '⚠️ Siz allaqachon yetakchisiz, ketma-ket ikki marta stavka qo\'ya olmaysiz.',
         no_rwcoin: '❌ RWcoiningiz yetarli emas.',
         race_condition: '❌ Boshqa foydalanuvchi ayni damda stavka qo\'ydi, qaytadan urinib ko\'ring.',
       };
@@ -454,7 +488,7 @@ bot.on('text', async (ctx, next) => {
       try {
         await ctx.telegram.sendMessage(
           result.previousBidderId,
-          `⚠️ Sizning auksiondagi stavkangiz oshirib yuborildi. ${result.previousBid} RWcoiningiz hisobingizga qaytarildi.`
+          `⚠️ Sizning auksiondagi stavkangiz (${result.previousBid} RWcoin) oshirib yuborildi. Diqqat: bu RWcoin qaytarilmaydi - xohlasangiz qayta stavka qo'ying!`
         );
       } catch (err) {
         // foydalanuvchi botni bloklagan bo'lishi mumkin
@@ -483,13 +517,12 @@ bot.on('text', async (ctx, next) => {
         title: `${ctx.from.first_name || 'Foydalanuvchi'} auksioni`,
         description: '',
         minBid: MIN_USER_AUCTION_BID,
-        potRwcoin: Math.max(1, Math.round(garov * USER_AUCTION_BONUS_PERCENT)),
         durationMinutes: USER_AUCTION_DURATION_MINUTES,
         createdBy: ctx.from.id,
         startBid: garov,
       });
       await ctx.reply(
-        `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Davomiyligi: 12 soat\n\n` +
+        `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Boshlang'ich vaqt: ${BID_EXTENSION_MINUTES} daqiqa (har garovdan so'ng yana shuncha uzayadi)\n\n` +
           `${config.auctionChannelId ? 'Auksion kanalga e\'lon qilindi.' : 'Auksion "🏆 Auksion" bo\'limida ko\'rinadi.'}`,
         mainMenu
       );
