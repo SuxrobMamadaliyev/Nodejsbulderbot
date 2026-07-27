@@ -6,7 +6,7 @@ const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode } = require('./functions');
-const { registerReferral, getReferralInfo } = require('./referral');
+const { registerReferral, savePendingReferral, tryRegisterPendingReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
 const { getOverallStatistics, formatOverallStatistics, incrementDailyStat } = require('./statistics');
@@ -28,6 +28,21 @@ const admin = require('./admin');
 const { getState, clearState, setState } = require('./states');
 
 const bot = new Telegraf(config.botToken);
+
+async function notifyReferralGranted(ctx, result) {
+  if (!result || !result.counted) return;
+  await incrementDailyStat('newReferrals', 1);
+  if (result.rwcoinGranted) {
+    try {
+      await ctx.telegram.sendMessage(
+        result.referrer.telegramId,
+        `🎉 Yangi referal! Hisobingizga ${result.rwcoinGranted} RWcoin qo'shildi.`
+      );
+    } catch (err) {
+      // foydalanuvchi botni bloklagan bo'lishi mumkin
+    }
+  }
+}
 
 bot.catch((err, ctx) => {
   logger.error({ err: err.message, stack: err.stack }, 'Master bot xatoligi');
@@ -58,19 +73,11 @@ bot.start(async (ctx) => {
     }
     if (isSubscribed) {
       const result = await registerReferral(referralCode, user);
-      if (result.counted) {
-        await incrementDailyStat('newReferrals', 1);
-        if (result.rwcoinGranted) {
-          try {
-            await ctx.telegram.sendMessage(
-              result.referrer.telegramId,
-              `🎉 Yangi referal! Hisobingizga ${result.rwcoinGranted} RWcoin qo'shildi.`
-            );
-          } catch (err) {
-            // foydalanuvchi botni bloklagan bo'lishi mumkin
-          }
-        }
-      }
+      await notifyReferralGranted(ctx, result);
+    } else {
+      // Foydalanuvchi hali obuna bo'lmagan - referal kodini yo'qotib qo'ymaslik uchun
+      // saqlab qo'yamiz, keyin "Obuna bo'ldim" tugmasi bosilganda hisoblanadi.
+      await savePendingReferral(user, referralCode);
     }
   }
 
@@ -93,6 +100,12 @@ bot.action('check_subscription', async (ctx) => {
   if (isSubscribed) {
     await ctx.answerCbQuery('✅ Obuna tasdiqlandi!');
     await ctx.editMessageText('✅ Obuna tasdiqlandi! Endi botdan to\'liq foydalanishingiz mumkin.');
+
+    // Agar oldin saqlab qo'yilgan referal kodi bo'lsa, endi hisoblaymiz
+    const { user } = await findOrCreateUser(ctx.from);
+    const result = await tryRegisterPendingReferral(user);
+    await notifyReferralGranted(ctx, result);
+
     await ctx.reply('Asosiy menyu:', mainMenu);
   } else {
     await ctx.answerCbQuery('❌ Siz hali barcha kanallarga obuna bo\'lmadingiz.', { show_alert: true });
@@ -446,6 +459,10 @@ bot.on('text', async (ctx, next) => {
       case 'awaiting_auction_min_bid':
       case 'awaiting_auction_duration':
         return admin.handleAuctionCreationInput(ctx);
+      case 'awaiting_broadcast_content':
+        return admin.handleBroadcastContent(ctx);
+      case 'awaiting_broadcast_buttons':
+        return admin.handleBroadcastButtonsAndConfirm(ctx);
       default:
         if (adminState.step && adminState.step.startsWith('awaiting_')) {
           // kanal qo'shish oqimi kanal ro'yxati ochiq bo'lganda ishlaydi
@@ -558,19 +575,6 @@ bot.on(['photo', 'video', 'audio', 'voice', 'animation', 'sticker', 'document'],
   const adminState = getState(admin.SCOPE, ctx.from.id);
   if (adminState && adminState.step === 'awaiting_broadcast_content' && (await isAdminUser(ctx.from.id))) {
     return admin.handleBroadcastContent(ctx);
-  }
-  return next();
-});
-
-// Broadcast matn kontenti va tugmalar bosqichi uchun alohida ushlash
-bot.on('text', async (ctx, next) => {
-  const adminState = getState(admin.SCOPE, ctx.from.id);
-  if (!adminState) return next();
-  if (adminState.step === 'awaiting_broadcast_content' && (await isAdminUser(ctx.from.id))) {
-    return admin.handleBroadcastContent(ctx);
-  }
-  if (adminState.step === 'awaiting_broadcast_buttons' && (await isAdminUser(ctx.from.id))) {
-    return admin.handleBroadcastButtonsAndConfirm(ctx);
   }
   return next();
 });
