@@ -4,7 +4,8 @@ const { createBot, startBot, verifyTokenWithTelegram } = require('./botmanager')
 const { getUserByTelegramId, spendRwcoin } = require('./users');
 const { getReferralInfo } = require('./referral');
 const { getTemplatePrice, getTemplateList } = require('./templates');
-const { templateSelectionInline, referralShareInline, cancelKeyboard, mainMenu } = require('./buttons');
+const { templateSelectionInline, referralShareInline, cancelKeyboard, mainMenuInline } = require('./buttons');
+const { isAdminUser } = require('./middlewares');
 const { Bot } = require('./database');
 const logger = require('./logger');
 
@@ -48,7 +49,7 @@ async function handleBuilderText(ctx) {
 
   if (text === '❌ Bekor qilish') {
     clearState(SCOPE, ctx.from.id);
-    await ctx.reply('❌ Bot yaratish bekor qilindi.', mainMenu);
+    await ctx.reply('❌ Bot yaratish bekor qilindi.', mainMenuInline(await isAdminUser(ctx.from.id)));
     return true;
   }
 
@@ -172,13 +173,13 @@ async function finalizeBotCreation(ctx) {
         `📦 Turi: ${templateType}\n` +
         `💰 To'lov: ${price} RWcoin\n\n` +
         `Botni "📂 Mening botlarim" bo'limidan boshqarishingiz mumkin.`,
-      mainMenu
+      mainMenuInline(await isAdminUser(ctx.from.id))
     );
     return true;
   } catch (err) {
     logger.error({ err: err.message }, 'Bot yaratishda xatolik');
     clearState(SCOPE, ctx.from.id);
-    await ctx.reply(`❌ Bot yaratishda xatolik yuz berdi: ${err.message}`, mainMenu);
+    await ctx.reply(`❌ Bot yaratishda xatolik yuz berdi: ${err.message}`, mainMenuInline(await isAdminUser(ctx.from.id)));
     return true;
   }
 }
