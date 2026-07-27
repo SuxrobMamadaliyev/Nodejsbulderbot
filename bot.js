@@ -386,6 +386,7 @@ bot.command('admin', adminOnlyMiddleware(), admin.openAdminPanel);
 bot.hears('⬅️ Asosiy menyu', async (ctx) => ctx.reply('Asosiy menyu:', mainMenu));
 
 bot.hears('👥 Foydalanuvchilar', adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, 1));
+bot.action(/usersPage_(\d+)/, adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, Number(ctx.match[1])));
 bot.hears('🤖 Botlar', adminOnlyMiddleware(), admin.showAllBots);
 bot.hears('📢 Kanallar', adminOnlyMiddleware(), admin.showChannels);
 bot.action(/delchannel_(.+)/, adminOnlyMiddleware(), async (ctx) => {
