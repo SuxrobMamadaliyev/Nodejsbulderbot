@@ -1,13 +1,6 @@
 const { Markup } = require('telegraf');
 
-const mainMenu = Markup.keyboard([
-  ['🤖 Bot yaratish', '📂 Mening botlarim'],
-  ['👥 Referallar', '📊 Profil'],
-  ['🏆 Auksion'],
-  ['⚙️ Sozlamalar', '🆘 Yordam'],
-]).resize();
-
-// Asosiy menyu - endi inline tugmalar ko'rinishida (reply keyboard o'rniga).
+// Asosiy menyu - inline tugmalar ko'rinishida.
 // isAdmin=true bo'lsa, pastiga "👨‍💻 Admin panel" tugmasi ham qo'shiladi.
 function mainMenuInline(isAdmin = false) {
   const rows = [
@@ -186,7 +179,6 @@ function paginationInline(prefix, page, totalPages) {
 }
 
 module.exports = {
-  mainMenu,
   mainMenuInline,
   backToMainMenuInline,
   adminMenu,
