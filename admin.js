@@ -252,7 +252,8 @@ async function handleTemplatePriceInput(ctx) {
 }
 
 // ===================== AUKSION YARATISH (ADMIN) =====================
-// Bosqichlar: sarlavha -> tavsif -> minimal stavka -> bonus (pot) RWcoin -> davomiylik (daqiqa)
+// Bosqichlar: sarlavha -> tavsif -> minimal stavka -> davomiylik (daqiqa)
+// (bank/90% modeli - g'olib bankning 90%ini oladi, qolganlarga qaytarilmaydi)
 
 async function startAuctionCreation(ctx) {
   setState(SCOPE, ctx.from.id, 'awaiting_auction_title', {});
@@ -288,17 +289,6 @@ async function handleAuctionCreationInput(ctx) {
         return true;
       }
       updateStateData(SCOPE, ctx.from.id, { minBid });
-      setState(SCOPE, ctx.from.id, 'awaiting_auction_pot');
-      await ctx.reply("🎁 G'olibga beriladigan bonus RWcoin miqdorini kiriting:");
-      return true;
-    }
-    case 'awaiting_auction_pot': {
-      const potRwcoin = parseInt(text, 10);
-      if (Number.isNaN(potRwcoin) || potRwcoin < 1) {
-        await ctx.reply('❌ Noto\'g\'ri qiymat. Musbat raqam kiriting.');
-        return true;
-      }
-      updateStateData(SCOPE, ctx.from.id, { potRwcoin });
       setState(SCOPE, ctx.from.id, 'awaiting_auction_duration');
       await ctx.reply('⏱ Auksion necha daqiqa davom etsin?');
       return true;
@@ -315,7 +305,6 @@ async function handleAuctionCreationInput(ctx) {
           title: data.title,
           description: data.description,
           minBid: data.minBid,
-          potRwcoin: data.potRwcoin,
           durationMinutes,
           createdBy: ctx.from.id,
         });
@@ -323,9 +312,9 @@ async function handleAuctionCreationInput(ctx) {
         await ctx.reply(
           `✅ Auksion yaratildi!\n\n` +
             `🏆 ${auction.title}\n` +
-            `💰 Minimal stavka: ${auction.minBid}\n` +
-            `🎁 Bonus: ${auction.potRwcoin} RWcoin\n` +
+            `💰 Minimal stavka: ${auction.minBid} RWcoin\n` +
             `⏱ Tugash vaqti: ${formatDate(auction.endsAt)}\n\n` +
+            `Qoidaga ko'ra g'olib bankdan 90% oladi, boshqa ishtirokchilarga qaytarilmaydi.\n` +
             `Foydalanuvchilar "🏆 Auksion" bo'limidan ishtirok etishlari mumkin.`,
           adminMenu
         );
