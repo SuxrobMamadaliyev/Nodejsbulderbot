@@ -144,10 +144,21 @@ async function closeExpiredAuctions(notifyFn) {
   return expired.length;
 }
 
+/**
+ * G'olibga beriladigan miqdorni hisoblaydi. Math.floor o'rniga Math.round
+ * ishlatiladi va bank juda kichik bo'lganda ham (masalan 1 RWcoin) g'olib
+ * kamida 1 RWcoin olishini kafolatlaydi - aks holda floor(1 * 0.9) = 0
+ * bo'lib, g'olib hech narsa olmay qolar edi.
+ */
+function calculatePayout(bank) {
+  if (bank <= 0) return 0;
+  return Math.max(1, Math.round(bank * WINNER_PAYOUT_PERCENT));
+}
+
 async function closeAuction(auction, notifyFn) {
   try {
     if (auction.currentBidderId && auction.bank > 0) {
-      const payout = Math.floor(auction.bank * WINNER_PAYOUT_PERCENT);
+      const payout = calculatePayout(auction.bank);
       await addRwcoin(auction.currentBidderId, payout);
       auction.winnerId = auction.currentBidderId;
       auction.payoutAmount = payout;
@@ -178,7 +189,7 @@ async function closeAuction(auction, notifyFn) {
  */
 function renderChannelAuctionText(auction, { finished = false } = {}) {
   if (finished) {
-    const payout = auction.payoutAmount || Math.floor(auction.bank * WINNER_PAYOUT_PERCENT);
+    const payout = auction.payoutAmount || calculatePayout(auction.bank);
     return (
       `⭐ - Auksion tugadi\n\n` +
       `- G'olibning oxirgi garovi: ${auction.currentBid} RWcoin\n\n` +
