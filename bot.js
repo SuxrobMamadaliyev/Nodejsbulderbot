@@ -5,7 +5,7 @@ const logger = require('./logger');
 const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
-const { extractReferralCode } = require('./functions');
+const { extractReferralCode, getFullName, escapeHtml } = require('./functions');
 const { registerReferral, savePendingReferral, tryRegisterPendingReferral, getReferralInfo } = require('./referral');
 const { checkUserSubscription, listChannels } = require('./subscription');
 const { renderProfile } = require('./profile');
@@ -290,7 +290,7 @@ async function postAuctionToChannel(ctx, auction) {
     const sent = await ctx.telegram.sendMessage(
       config.auctionChannelId,
       renderChannelAuctionText(auction),
-      channelAuctionInline(auction, me.username)
+      { parse_mode: 'HTML', ...channelAuctionInline(auction, me.username) }
     );
     auction.channelMessageId = sent.message_id;
     await auction.save();
@@ -327,7 +327,7 @@ bot.action(/chaucbal_(.+)/, async (ctx) => {
 bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
   const auctionId = ctx.match[1];
   const amount = parseInt(ctx.match[2], 10);
-  const result = await placeBid(auctionId, ctx.from.id, amount);
+  const result = await placeBid(auctionId, ctx.from.id, amount, getFullName(ctx.from));
   if (!result.ok) {
     const messages = {
       not_found: '❌ Auksion topilmadi.',
@@ -353,9 +353,24 @@ bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
   }
   try {
     const me = await ctx.telegram.getMe();
-    await ctx.editMessageText(renderChannelAuctionText(result.auction), channelAuctionInline(result.auction, me.username));
+    await ctx.editMessageText(
+      renderChannelAuctionText(result.auction),
+      { parse_mode: 'HTML', ...channelAuctionInline(result.auction, me.username) }
+    );
   } catch (err) {
     // xabar o'zgarmagan yoki tahrirlab bo'lmaydi - e'tiborsiz qoldiramiz
+  }
+  // Garov oshirilganini kanalga alohida xabar sifatida ham e'lon qilamiz
+  if (config.auctionChannelId) {
+    try {
+      await ctx.telegram.sendMessage(
+        config.auctionChannelId,
+        `⭐️ <a href="tg://user?id=${ctx.from.id}">${escapeHtml(getFullName(ctx.from))}</a> garovni ${amount} RWcoinga oshirdi!`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      // kanalga yozib bo'lmadi - e'tiborsiz qoldiramiz
+    }
   }
 });
 
@@ -486,7 +501,7 @@ bot.on('text', async (ctx, next) => {
       await ctx.reply('❌ Noto\'g\'ri miqdor. Musbat raqam kiriting.');
       return;
     }
-    const result = await placeBid(auctionState.data.auctionId, ctx.from.id, amount);
+    const result = await placeBid(auctionState.data.auctionId, ctx.from.id, amount, getFullName(ctx.from));
     clearState(AUCTION_SCOPE, ctx.from.id);
     if (!result.ok) {
       const messages = {
@@ -510,6 +525,31 @@ bot.on('text', async (ctx, next) => {
         );
       } catch (err) {
         // foydalanuvchi botni bloklagan bo'lishi mumkin
+      }
+    }
+    if (config.auctionChannelId) {
+      if (result.auction.channelMessageId) {
+        try {
+          const me = await ctx.telegram.getMe();
+          await ctx.telegram.editMessageText(
+            config.auctionChannelId,
+            result.auction.channelMessageId,
+            undefined,
+            renderChannelAuctionText(result.auction),
+            { parse_mode: 'HTML', ...channelAuctionInline(result.auction, me.username) }
+          );
+        } catch (err) {
+          // xabar o'zgarmagan yoki tahrirlab bo'lmaydi - e'tiborsiz qoldiramiz
+        }
+      }
+      try {
+        await ctx.telegram.sendMessage(
+          config.auctionChannelId,
+          `⭐️ <a href="tg://user?id=${ctx.from.id}">${escapeHtml(getFullName(ctx.from))}</a> garovni ${amount} RWcoinga oshirdi!`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (err) {
+        // kanalga yozib bo'lmadi - e'tiborsiz qoldiramiz
       }
     }
     return;
@@ -538,6 +578,7 @@ bot.on('text', async (ctx, next) => {
         durationMinutes: USER_AUCTION_DURATION_MINUTES,
         createdBy: ctx.from.id,
         startBid: garov,
+        createdByName: getFullName(ctx.from),
       });
       await ctx.reply(
         `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Boshlang'ich vaqt: ${BID_EXTENSION_MINUTES} daqiqa (har garovdan so'ng yana shuncha uzayadi)\n\n` +
