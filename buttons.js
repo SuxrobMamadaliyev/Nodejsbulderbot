@@ -84,10 +84,13 @@ function channelListInline(channels) {
 }
 
 // Kanaldagi jonli auksion posti uchun tugmalar: tezkor stavka qiymatlari,
-// balansni ko'rish va botga qaytish. `auction._id` MongoDB ID, callback_data
-// 64 baytdan oshmasligi kerak, shuning uchun qisqa prefiks ishlatiladi.
+// balansni ko'rish va botga qaytish. Qoidaga ko'ra bir garov joriy
+// stavkadan ko'pi bilan 10 RWcoinga oshirilishi mumkin, shuning uchun
+// tugmalar +1 dan +10 gacha bo'lgan qiymatlarni taklif qiladi.
+// `auction._id` MongoDB ID, callback_data 64 baytdan oshmasligi kerak,
+// shuning uchun qisqa prefiks ishlatiladi.
 function channelAuctionInline(auction, botUsername) {
-  const base = auction.currentBid || auction.minBid || 0;
+  const base = auction.currentBid || 0;
   const steps = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   const rows = [];
   for (let i = 0; i < steps.length; i += 5) {
@@ -97,10 +100,19 @@ function channelAuctionInline(auction, botUsername) {
       )
     );
   }
-  rows.push([Markup.button.callback(`${base + 100}`, `chauc_${auction._id}_${base + 100}`)]);
   rows.push([Markup.button.callback('💳 Mening balansim', `chaucbal_${auction._id}`)]);
   if (botUsername) {
     rows.push([Markup.button.url('➡️ Botga qaytish', `https://t.me/${botUsername}`)]);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
+// Auksion faol bo'lmaganda "🏆 Auksion" bo'limida ko'rsatiladigan tugmalar:
+// yangi auksion boshlash va auksion kanaliga o'tish.
+function auctionInactiveInline(channelUrl) {
+  const rows = [[Markup.button.callback('🏆 Auksion boshlash', 'start_own_auction')]];
+  if (channelUrl) {
+    rows.push([Markup.button.url('📢 Auksion kanalimiz', channelUrl)]);
   }
   return Markup.inlineKeyboard(rows);
 }
@@ -146,6 +158,7 @@ module.exports = {
   subscriptionCheckInline,
   channelListInline,
   channelAuctionInline,
+  auctionInactiveInline,
   botListInline,
   botManageInline,
   paginationInline,
