@@ -2,27 +2,35 @@ const { Auction, User } = require('./database');
 const { addRwcoin, spendRwcoin } = require('./users');
 const logger = require('./logger');
 
-// Foydalanuvchilar o'zi auksion boshlaganda talab qilinadigan eng kam garov.
-const MIN_USER_AUCTION_BID = 10;
+// ===================== AUKSION QOIDALARI (KONSTANTALAR) =====================
+const MIN_USER_AUCTION_BID = 1; // auksionni 1 RWcoindan boshlash mumkin
+const MAX_BID_STEP = 10; // har bir garov joriy stavkadan ko'pi bilan 10 RWcoinga oshirilishi mumkin
+const BID_EXTENSION_MINUTES = 10; // har bir garovdan so'ng auksion 10 daqiqaga uzaytiriladi
+const MIN_BIDS_TO_END = 10; // auksion shu qadar garovga yetsa, tugashi mumkin (informatsion)
+const WINNER_PAYOUT_PERCENT = 0.9; // g'olib bankning 90%ini oladi
 
 /**
- * KOIN AUKSIONI - QANDAY ISHLAYDI
- * - Admin yoki oddiy foydalanuvchi auksion ochadi: sarlavha, minimal stavka (minBid),
- *   soniyalarda muddat va g'olibga beriladigan bonus RWcoin miqdori (potRwcoin).
- * - Foydalanuvchilar o'z RWcoinlaridan stavka qo'yadi. Har bir yangi stavka
- *   avvalgi eng yuqori stavkachining RWcoinini to'liq qaytaradi va yangi
- *   stavkachining RWcoinini hisobidan yechib, auksionga "band" qiladi.
- * - Auksion muddati tugaganda: g'olib (oxirgi eng yuqori stavkachi) hisobiga
- *   o'z stavkasi + potRwcoin (bonus) qaytariladi - ya'ni u RWcoinini ko'paytiradi.
- *   Boshqa barcha ishtirokchilarning RWcoinlari darhol qaytarilgani uchun
- *   ular hech narsa yo'qotmaydi, faqat g'olib bo'lmasa bonusni yo'qotadi.
+ * KOIN AUKSIONI - QANDAY ISHLAYDI (YANGI QOIDALAR)
+ * - Auksionni istalgan foydalanuvchi 1 RWcoindan boshlashi mumkin.
+ * - Har qanday ishtirokchi oldingi garovni oshirishi mumkin, lekin bir vaqtning
+ *   o'zida joriy stavkadan ko'pi bilan MAX_BID_STEP (10) RWcoinga ko'p qilib.
+ * - Foydalanuvchi ketma-ket ikki marta stavka qo'ya olmaydi (o'zini o'zi
+ *   oshira olmaydi) - shu bois "already_leading" tekshiruvi bor.
+ * - Har bir muvaffaqiyatli garovdan so'ng auksion tugash vaqti hozirgi
+ *   vaqtdan BID_EXTENSION_MINUTES (10) daqiqaga uzaytiriladi.
+ * - MUHIM: bu yerda ESKI "qaytarib berish" mantig'i YO'Q. Har bir garov
+ *   qo'yilganda RWcoin darhol foydalanuvchidan yechiladi va auksion bankiga
+ *   (bank maydoni) qo'shiladi - agar boshqa birov ustidan garov qo'ysa ham,
+ *   avvalgi ishtirokchining puli QAYTARILMAYDI. Auksion tugaganda faqat
+ *   oxirgi (eng yuqori) garovchi g'olib hisoblanadi va bankning 90%ini oladi.
+ *   Qolgan 10% xizmat haqi sifatida hech kimga qaytarilmaydi.
  */
 
-async function createAuction({ title, description, potRwcoin, minBid, durationMinutes, createdBy, startBid = null }) {
+async function createAuction({ title, description, minBid, durationMinutes, createdBy, startBid = null }) {
   const endsAt = new Date(Date.now() + durationMinutes * 60 * 1000);
 
-  // Foydalanuvchi o'zi auksion boshlasa, kiritgan garovi darhol birinchi
-  // stavka sifatida qabul qilinadi va uning RWcoinidan yechiladi.
+  // Auksionni boshlovchi o'zining garovini darhol birinchi stavka sifatida
+  // qo'yadi va uning RWcoini shu zahoti yechiladi (qaytarilmaydigan bankka tushadi).
   if (startBid) {
     const hasFunds = await spendRwcoin(createdBy, startBid);
     if (!hasFunds) {
@@ -34,10 +42,10 @@ async function createAuction({ title, description, potRwcoin, minBid, durationMi
     return await Auction.create({
       title,
       description: description || '',
-      potRwcoin,
       minBid,
       currentBid: startBid || 0,
       currentBidderId: startBid ? createdBy : null,
+      bank: startBid || 0,
       bidsCount: startBid ? 1 : 0,
       status: 'active',
       endsAt,
@@ -61,10 +69,15 @@ async function getAuctionById(auctionId) {
 }
 
 /**
- * Stavka qo'yish. Atomik ravishda: avvalgi stavkachiga RWcoin qaytariladi,
- * yangi stavkachidan RWcoin yechiladi. Musobaqa sharti optimistik yangilanish
- * (currentBid maydoni orqali) bilan tekshiriladi, shu bois parallel
- * so'rovlarda ikki kishi bir vaqtda g'olib bo'lib qolmaydi.
+ * Stavka qo'yish. Qoidalar:
+ * - joriy stavkadan kamida 1, ko'pi bilan MAX_BID_STEP (10) RWcoin ko'p bo'lishi kerak;
+ * - hozirgi yetakchi ketma-ket o'zini o'zi oshira olmaydi;
+ * - muvaffaqiyatli garov: RWcoin darhol yechiladi, bankka to'liq qo'shiladi
+ *   (avvalgi garovchiga HECH NARSA qaytarilmaydi), auksion muddati
+ *   BID_EXTENSION_MINUTES ga uzaytiriladi.
+ * Musobaqa sharti optimistik yangilanish (currentBid maydoni orqali) bilan
+ * tekshiriladi, shu bois parallel so'rovlarda ikki kishi bir vaqtda g'olib
+ * bo'lib qolmaydi.
  */
 async function placeBid(auctionId, telegramId, bidAmount) {
   const auction = await Auction.findById(auctionId);
@@ -72,12 +85,17 @@ async function placeBid(auctionId, telegramId, bidAmount) {
   if (auction.status !== 'active' || auction.endsAt <= new Date()) {
     return { ok: false, reason: 'ended' };
   }
+  if (auction.currentBidderId === telegramId) {
+    return { ok: false, reason: 'already_leading' };
+  }
+
   const minRequired = Math.max(auction.minBid, auction.currentBid + 1);
+  const maxAllowed = auction.currentBid + MAX_BID_STEP;
   if (bidAmount < minRequired) {
     return { ok: false, reason: 'too_low', minRequired };
   }
-  if (auction.currentBidderId === telegramId) {
-    return { ok: false, reason: 'already_leading' };
+  if (bidAmount > maxAllowed) {
+    return { ok: false, reason: 'too_high', maxAllowed };
   }
 
   const hasFunds = await spendRwcoin(telegramId, bidAmount);
@@ -85,32 +103,35 @@ async function placeBid(auctionId, telegramId, bidAmount) {
     return { ok: false, reason: 'no_rwcoin' };
   }
 
-  // Avvalgi stavkachiga RWcoinini qaytaramiz
   const previousBidderId = auction.currentBidderId;
   const previousBid = auction.currentBid;
+  const newEndsAt = new Date(Date.now() + BID_EXTENSION_MINUTES * 60 * 1000);
 
   const updated = await Auction.findOneAndUpdate(
     { _id: auctionId, status: 'active', currentBid: previousBid },
-    { $set: { currentBid: bidAmount, currentBidderId: telegramId }, $inc: { bidsCount: 1 } },
+    {
+      $set: { currentBid: bidAmount, currentBidderId: telegramId, endsAt: newEndsAt },
+      $inc: { bidsCount: 1, bank: bidAmount },
+    },
     { new: true }
   );
 
   if (!updated) {
     // Boshqa foydalanuvchi bir vaqtda stavka qo'ygan - RWcoinni qaytarib beramiz
+    // (bu holatda garov umuman qabul qilinmadi, shuning uchun qaytarish to'g'ri).
     await addRwcoin(telegramId, bidAmount);
     return { ok: false, reason: 'race_condition' };
   }
 
-  if (previousBidderId) {
-    await addRwcoin(previousBidderId, previousBid);
-  }
-
+  // Eslatma: previousBidderId/previousBid faqat XABAR berish uchun qaytariladi -
+  // ularning puli endi qaytarilmaydi, chunki qoidaga ko'ra bank bo'lib qoladi.
   return { ok: true, auction: updated, previousBidderId, previousBid };
 }
 
 /**
  * Muddati tugagan barcha faol auksionlarni yopadi va g'olibga
- * stavka + bonus RWcoinlarni beradi. Scheduler tomonidan chaqiriladi.
+ * (oxirgi eng yuqori garovchiga) bankning 90%ini beradi. Scheduler
+ * tomonidan chaqiriladi.
  */
 async function closeExpiredAuctions(notifyFn) {
   const expired = await Auction.find({ status: 'active', endsAt: { $lte: new Date() } });
@@ -123,16 +144,16 @@ async function closeExpiredAuctions(notifyFn) {
 
 async function closeAuction(auction, notifyFn) {
   try {
-    if (auction.currentBidderId) {
-      const payout = auction.currentBid + auction.potRwcoin;
+    if (auction.currentBidderId && auction.bank > 0) {
+      const payout = Math.floor(auction.bank * WINNER_PAYOUT_PERCENT);
       await addRwcoin(auction.currentBidderId, payout);
       auction.winnerId = auction.currentBidderId;
       auction.payoutAmount = payout;
       auction.status = 'ended';
       await auction.save();
       logger.info(
-        { auctionId: auction._id.toString(), winner: auction.winnerId, payout },
-        'Auksion yakunlandi, g\'olibga RWcoin berildi'
+        { auctionId: auction._id.toString(), winner: auction.winnerId, payout, bank: auction.bank },
+        'Auksion yakunlandi, g\'olibga bankning 90%i berildi'
       );
       if (notifyFn) {
         await notifyFn(auction.winnerId, auction, payout).catch(() => {});
@@ -154,13 +175,13 @@ async function closeAuction(auction, notifyFn) {
  * ham xavfsiz ishlata oladi.
  */
 function renderChannelAuctionText(auction, { finished = false } = {}) {
-  const bank = auction.currentBid + auction.potRwcoin;
   if (finished) {
+    const payout = auction.payoutAmount || Math.floor(auction.bank * WINNER_PAYOUT_PERCENT);
     return (
       `⭐ - Auksion tugadi\n` +
-      `⭐ - Lider: Foydalanuvchi tikdi: ${auction.currentBid} RWcoin\n` +
-      `⭐ - Auksion banki: ${bank} RWcoin\n` +
-      `⭐ - G'olib auksion bankining hammasini oldi: +${bank} RWcoin`
+      `⭐ - G'olibning oxirgi garovi: ${auction.currentBid} RWcoin\n` +
+      `⭐ - Auksion banki: ${auction.bank} RWcoin\n` +
+      `⭐ - G'olib bankning 90%ini oldi: +${payout} RWcoin`
     );
   }
   const msLeft = Math.max(0, auction.endsAt.getTime() - Date.now());
@@ -172,19 +193,22 @@ function renderChannelAuctionText(auction, { finished = false } = {}) {
     `⭐ - Auksion aktivlashdi\n` +
     `⭐ - Holati: Boshlangan\n` +
     `⭐ - Qolgan vaqt: ${hh}:${mm}:${ss}\n` +
-    `⭐ - Auksion banki: ${bank} RWcoin\n` +
+    `⭐ - Auksion banki: ${auction.bank} RWcoin\n` +
     `⭐ - Garovlar soni: ${auction.bidsCount}ta\n` +
-    `⭐ - Lider: Foydalanuvchi tikdi: ${auction.currentBid} RWcoin\n` +
+    `⭐ - Joriy stavka: ${auction.currentBid} RWcoin\n` +
+    `⭐ - Keyingi stavka: ${auction.currentBid + 1} dan ${auction.currentBid + MAX_BID_STEP} RWcoingacha\n` +
     `⭐ - Garovni oshirish uchun tugmalardan foydalaning`
   );
 }
 
+/**
+ * Auksionni bekor qilish (faqat admin uchun). YANGI QOIDAGA KO'RA hech kimga
+ * pul qaytarilmaydi - qo'yilgan barcha garovlar bankda "yo'qoladi". Shu bois
+ * bu funksiyadan juda ehtiyotkorlik bilan foydalanish kerak.
+ */
 async function cancelAuction(auctionId) {
   const auction = await Auction.findById(auctionId);
   if (!auction) return { ok: false, reason: 'not_found' };
-  if (auction.currentBidderId) {
-    await addRwcoin(auction.currentBidderId, auction.currentBid);
-  }
   auction.status = 'cancelled';
   await auction.save();
   return { ok: true };
@@ -192,6 +216,10 @@ async function cancelAuction(auctionId) {
 
 module.exports = {
   MIN_USER_AUCTION_BID,
+  MAX_BID_STEP,
+  BID_EXTENSION_MINUTES,
+  MIN_BIDS_TO_END,
+  WINNER_PAYOUT_PERCENT,
   renderChannelAuctionText,
   createAuction,
   getActiveAuctions,
