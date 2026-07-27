@@ -3,7 +3,7 @@ const { Markup } = require('telegraf');
 const mainMenu = Markup.keyboard([
   ['🤖 Bot yaratish', '📂 Mening botlarim'],
   ['👥 Referallar', '📊 Profil'],
-  ['💰 RWcoin', '🏆 Auksion'],
+  ['🏆 Auksion'],
   ['⚙️ Sozlamalar', '🆘 Yordam'],
 ]).resize();
 
