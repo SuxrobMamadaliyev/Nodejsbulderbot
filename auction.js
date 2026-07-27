@@ -1,5 +1,6 @@
 const { Auction, User } = require('./database');
 const { addRwcoin, spendRwcoin } = require('./users');
+const { getFullName, escapeHtml } = require('./functions');
 const logger = require('./logger');
 
 // ===================== AUKSION QOIDALARI (KONSTANTALAR) =====================
@@ -26,7 +27,7 @@ const WINNER_PAYOUT_PERCENT = 0.9; // g'olib bankning 90%ini oladi
  *   Qolgan 10% xizmat haqi sifatida hech kimga qaytarilmaydi.
  */
 
-async function createAuction({ title, description, minBid, durationMinutes, createdBy, startBid = null }) {
+async function createAuction({ title, description, minBid, durationMinutes, createdBy, startBid = null, createdByName = null }) {
   const endsAt = new Date(Date.now() + durationMinutes * 60 * 1000);
 
   // Auksionni boshlovchi o'zining garovini darhol birinchi stavka sifatida
@@ -45,6 +46,7 @@ async function createAuction({ title, description, minBid, durationMinutes, crea
       minBid,
       currentBid: startBid || 0,
       currentBidderId: startBid ? createdBy : null,
+      currentBidderName: startBid ? createdByName : null,
       bank: startBid || 0,
       bidsCount: startBid ? 1 : 0,
       status: 'active',
@@ -79,7 +81,7 @@ async function getAuctionById(auctionId) {
  * tekshiriladi, shu bois parallel so'rovlarda ikki kishi bir vaqtda g'olib
  * bo'lib qolmaydi.
  */
-async function placeBid(auctionId, telegramId, bidAmount) {
+async function placeBid(auctionId, telegramId, bidAmount, bidderName = null) {
   const auction = await Auction.findById(auctionId);
   if (!auction) return { ok: false, reason: 'not_found' };
   if (auction.status !== 'active' || auction.endsAt <= new Date()) {
@@ -110,7 +112,7 @@ async function placeBid(auctionId, telegramId, bidAmount) {
   const updated = await Auction.findOneAndUpdate(
     { _id: auctionId, status: 'active', currentBid: previousBid },
     {
-      $set: { currentBid: bidAmount, currentBidderId: telegramId, endsAt: newEndsAt },
+      $set: { currentBid: bidAmount, currentBidderId: telegramId, currentBidderName: bidderName, endsAt: newEndsAt },
       $inc: { bidsCount: 1, bank: bidAmount },
     },
     { new: true }
@@ -125,7 +127,7 @@ async function placeBid(auctionId, telegramId, bidAmount) {
 
   // Eslatma: previousBidderId/previousBid faqat XABAR berish uchun qaytariladi -
   // ularning puli endi qaytarilmaydi, chunki qoidaga ko'ra bank bo'lib qoladi.
-  return { ok: true, auction: updated, previousBidderId, previousBid };
+  return { ok: true, auction: updated, previousBidderId, previousBid, bidderName };
 }
 
 /**
@@ -178,10 +180,10 @@ function renderChannelAuctionText(auction, { finished = false } = {}) {
   if (finished) {
     const payout = auction.payoutAmount || Math.floor(auction.bank * WINNER_PAYOUT_PERCENT);
     return (
-      `⭐ - Auksion tugadi\n` +
-      `⭐ - G'olibning oxirgi garovi: ${auction.currentBid} RWcoin\n` +
-      `⭐ - Auksion banki: ${auction.bank} RWcoin\n` +
-      `⭐ - G'olib bankning 90%ini oldi: +${payout} RWcoin`
+      `⭐ - Auksion tugadi\n\n` +
+      `- G'olibning oxirgi garovi: ${auction.currentBid} RWcoin\n\n` +
+      `- Auksion banki: ${auction.bank} RWcoin\n\n` +
+      `- G'olib bankning 90%ini oldi: +${payout} RWcoin`
     );
   }
   const msLeft = Math.max(0, auction.endsAt.getTime() - Date.now());
@@ -189,15 +191,21 @@ function renderChannelAuctionText(auction, { finished = false } = {}) {
   const hh = String(Math.floor(totalSec / 3600)).padStart(2, '0');
   const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
   const ss = String(totalSec % 60).padStart(2, '0');
+
+  const leaderLine = auction.currentBidderId
+    ? `Lider: <a href="tg://user?id=${auction.currentBidderId}">${escapeHtml(
+        auction.currentBidderName || 'Foydalanuvchi'
+      )}</a> tikdi: ${auction.currentBid} RWcoin`
+    : `Lider: hali yo'q`;
+
   return (
-    `⭐ - Auksion aktivlashdi\n` +
-    `⭐ - Holati: Boshlangan\n` +
-    `⭐ - Qolgan vaqt: ${hh}:${mm}:${ss}\n` +
-    `⭐ - Auksion banki: ${auction.bank} RWcoin\n` +
-    `⭐ - Garovlar soni: ${auction.bidsCount}ta\n` +
-    `⭐ - Joriy stavka: ${auction.currentBid} RWcoin\n` +
-    `⭐ - Keyingi stavka: ${auction.currentBid + 1} dan ${auction.currentBid + MAX_BID_STEP} RWcoingacha\n` +
-    `⭐ - Garovni oshirish uchun tugmalardan foydalaning`
+    `⭐ Auksion aktivlashdi\n\n` +
+    `- Holati: Boshlangan\n\n` +
+    `- Qolgan vaqt: ${hh}:${mm}:${ss}\n\n` +
+    `- Auksion banki: ${auction.bank} RWcoin\n\n` +
+    `Garovlar soni: ${auction.bidsCount}ta\n\n` +
+    `${leaderLine}\n\n` +
+    `- Garovni oshirish uchun tugmalardan foydalaning`
   );
 }
 
