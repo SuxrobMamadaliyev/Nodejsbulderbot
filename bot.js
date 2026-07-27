@@ -2,7 +2,7 @@ const { Telegraf } = require('telegraf');
 const config = require('./config');
 const logger = require('./logger');
 
-const { mainMenu, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
+const { mainMenuInline, backToMainMenuInline, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode, getFullName, escapeHtml } = require('./functions');
@@ -86,7 +86,7 @@ bot.start(async (ctx) => {
       `Bu yerda siz o'z Telegram botingizni RWcoin evaziga yaratishingiz mumkin.\n` +
       `RWcoinni referal orqali yig'ing yoki auksionda ko'paytiring!\n` +
       `Boshlash uchun quyidagi menyudan foydalaning 👇`,
-    mainMenu
+    mainMenuInline(await isAdminUser(ctx.from.id))
   );
 });
 
@@ -106,7 +106,7 @@ bot.action('check_subscription', async (ctx) => {
     const result = await tryRegisterPendingReferral(user);
     await notifyReferralGranted(ctx, result);
 
-    await ctx.reply('Asosiy menyu:', mainMenu);
+    await ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id)));
   } else {
     await ctx.answerCbQuery('❌ Siz hali barcha kanallarga obuna bo\'lmadingiz.', { show_alert: true });
   }
@@ -115,13 +115,22 @@ bot.action('check_subscription', async (ctx) => {
 // ===================== ASOSIY MENYU =====================
 
 bot.hears('🤖 Bot yaratish', builder.startBotCreation);
+bot.action('menu_create_bot', async (ctx) => {
+  await ctx.answerCbQuery();
+  return builder.startBotCreation(ctx);
+});
 
-bot.hears('📂 Mening botlarim', async (ctx) => {
+async function showMyBots(ctx) {
   const bots = await Bot.find({ ownerId: ctx.from.id }).sort({ createdAt: -1 });
   if (!bots.length) {
     return ctx.reply('📂 Sizda hali botlar yo\'q. "🤖 Bot yaratish" tugmasini bosib birinchi botingizni yarating!');
   }
   await ctx.reply(`📂 Sizning botlaringiz (${bots.length}):`, botListInline(bots));
+}
+bot.hears('📂 Mening botlarim', showMyBots);
+bot.action('menu_my_bots', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showMyBots(ctx);
 });
 
 bot.action(/botinfo_(.+)/, async (ctx) => {
@@ -157,7 +166,7 @@ bot.action(/bot(start|stop|restart|delete)_(.+)/, async (ctx) => {
   return admin.handleBotAction(ctx, action, botId);
 });
 
-bot.hears('👥 Referallar', async (ctx) => {
+async function showReferrals(ctx) {
   const me = await ctx.telegram.getMe();
   const info = await getReferralInfo(ctx.from.id, me.username);
   if (!info) return ctx.reply('❌ Ma\'lumot topilmadi.');
@@ -170,11 +179,21 @@ bot.hears('👥 Referallar', async (ctx) => {
       `Yig'gan RWcoiningiz bilan "🤖 Bot yaratish" bo'limida bot sotib olishingiz mumkin!`,
     referralShareInline(info.link, '🤖 RWcoin yig\'ish uchun shu havoladan foydalaning!')
   );
+}
+bot.hears('👥 Referallar', showReferrals);
+bot.action('menu_referrals', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showReferrals(ctx);
 });
 
-bot.hears('📊 Profil', async (ctx) => {
+async function showProfile(ctx) {
   const text = await renderProfile(ctx.from.id);
-  await ctx.reply(text);
+  await ctx.reply(text, backToMainMenuInline());
+}
+bot.hears('📊 Profil', showProfile);
+bot.action('menu_profile', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showProfile(ctx);
 });
 
 // ===================== RWCOIN =====================
@@ -219,7 +238,7 @@ async function getAuctionChannelUrl(telegram) {
   return null;
 }
 
-bot.hears('🏆 Auksion', async (ctx) => {
+async function showAuctionSection(ctx) {
   const auctions = await getActiveAuctions();
   const channelUrl = await getAuctionChannelUrl(ctx.telegram);
   if (!auctions.length) {
@@ -230,6 +249,11 @@ bot.hears('🏆 Auksion', async (ctx) => {
     `${AUCTION_RULES_TEXT}\n\n🟢 Hozir auksion faol! Ishtirok etish uchun auksion kanaliga o'ting.`,
     keyboard
   );
+}
+bot.hears('🏆 Auksion', showAuctionSection);
+bot.action('menu_auction', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showAuctionSection(ctx);
 });
 
 async function renderAuctionDetail(auction) {
@@ -374,13 +398,19 @@ bot.action(/chauc_(.+)_(\d+)/, async (ctx) => {
   }
 });
 
-bot.hears('⚙️ Sozlamalar', async (ctx) => {
+async function showSettings(ctx) {
   await ctx.reply(
-    '⚙️ Sozlamalar\n\nHozircha shaxsiy sozlamalar mavjud emas. Botlaringizni "📂 Mening botlarim" bo\'limidan boshqarishingiz mumkin.'
+    '⚙️ Sozlamalar\n\nHozircha shaxsiy sozlamalar mavjud emas. Botlaringizni "📂 Mening botlarim" bo\'limidan boshqarishingiz mumkin.',
+    backToMainMenuInline()
   );
+}
+bot.hears('⚙️ Sozlamalar', showSettings);
+bot.action('menu_settings', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showSettings(ctx);
 });
 
-bot.hears('🆘 Yordam', async (ctx) => {
+async function showHelp(ctx) {
   await ctx.reply(
     '🆘 Yordam\n\n' +
       '🤖 Bot yaratish — RWcoin evaziga @BotFather orqali olingan token yordamida yangi bot yaratasiz.\n' +
@@ -394,16 +424,30 @@ bot.hears('🆘 Yordam', async (ctx) => {
       [Markup.button.url('👨‍💻 Admin dasturchi', `https://t.me/${config.developerUsername}`)],
       [Markup.button.url('🏆 RW Auksion kanali', `https://t.me/${config.auctionChannelUsername}`)],
       [Markup.button.url('📰 RW Builder News', `https://t.me/${config.builderNewsChannelUsername}`)],
+      [Markup.button.callback('⬅️ Asosiy menyu', 'menu_back')],
     ])
   );
+}
+bot.hears('🆘 Yordam', showHelp);
+bot.action('menu_help', async (ctx) => {
+  await ctx.answerCbQuery();
+  return showHelp(ctx);
 });
 
 // ===================== ADMIN PANEL =====================
 
 bot.hears('👨‍💻 Admin', adminOnlyMiddleware(), admin.openAdminPanel);
 bot.command('admin', adminOnlyMiddleware(), admin.openAdminPanel);
+bot.action('menu_admin', adminOnlyMiddleware(), async (ctx) => {
+  await ctx.answerCbQuery();
+  return admin.openAdminPanel(ctx);
+});
 
-bot.hears('⬅️ Asosiy menyu', async (ctx) => ctx.reply('Asosiy menyu:', mainMenu));
+bot.hears('⬅️ Asosiy menyu', async (ctx) => ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id))));
+bot.action('menu_back', async (ctx) => {
+  await ctx.answerCbQuery();
+  return ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id)));
+});
 
 bot.hears('👥 Foydalanuvchilar', adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, 1));
 bot.action(/usersPage_(\d+)/, adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, Number(ctx.match[1])));
@@ -498,7 +542,7 @@ bot.on('text', async (ctx, next) => {
     const text = (ctx.message.text || '').trim();
     if (text === '❌ Bekor qilish') {
       clearState(AUCTION_SCOPE, ctx.from.id);
-      await ctx.reply('❌ Bekor qilindi.', mainMenu);
+      await ctx.reply('❌ Bekor qilindi.', mainMenuInline(await isAdminUser(ctx.from.id)));
       return;
     }
     const amount = parseInt(text, 10);
@@ -566,7 +610,7 @@ bot.on('text', async (ctx, next) => {
     const text = (ctx.message.text || '').trim();
     if (text === '❌ Bekor qilish') {
       clearState(USER_AUCTION_SCOPE, ctx.from.id);
-      await ctx.reply('❌ Bekor qilindi.', mainMenu);
+      await ctx.reply('❌ Bekor qilindi.', mainMenuInline(await isAdminUser(ctx.from.id)));
       return;
     }
     const garov = parseInt(text, 10);
@@ -588,12 +632,12 @@ bot.on('text', async (ctx, next) => {
       await ctx.reply(
         `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Boshlang'ich vaqt: ${BID_EXTENSION_MINUTES} daqiqa (har garovdan so'ng yana shuncha uzayadi)\n\n` +
           `${config.auctionChannelId ? 'Auksion kanalga e\'lon qilindi.' : 'Auksion "🏆 Auksion" bo\'limida ko\'rinadi.'}`,
-        mainMenu
+        mainMenuInline(await isAdminUser(ctx.from.id))
       );
       await postAuctionToChannel(ctx, auction);
     } catch (err) {
       logger.warn({ err: err.message }, 'Foydalanuvchi auksionini yaratishda xatolik');
-      await ctx.reply('❌ RWcoiningiz yetarli emas yoki xatolik yuz berdi.', mainMenu);
+      await ctx.reply('❌ RWcoiningiz yetarli emas yoki xatolik yuz berdi.', mainMenuInline(await isAdminUser(ctx.from.id)));
     }
     return;
   }
