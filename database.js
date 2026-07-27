@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
     firstName: { type: String, default: null },
     lastName: { type: String, default: null },
     referredBy: { type: Number, default: null },
+    pendingReferralCode: { type: String, default: null },
     referralCode: { type: String, unique: true, index: true },
     referralsCount: { type: Number, default: 0 },
     rwcoin: { type: Number, default: 0 },
