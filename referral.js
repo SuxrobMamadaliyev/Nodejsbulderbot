@@ -46,6 +46,34 @@ async function registerReferral(referrerCode, newUser) {
   return { counted: true, referrer, rwcoinGranted: rwcoinPerReferral };
 }
 
+/**
+ * Foydalanuvchi /start bosganda hali kanallarga obuna bo'lmagan bo'lsa,
+ * referal kodini vaqtincha saqlab qo'yamiz - keyinroq "Obuna bo'ldim"
+ * tugmasini bosganda shu kod orqali referalni hisoblash imkoni bo'lsin.
+ */
+async function savePendingReferral(newUser, referrerCode) {
+  if (!referrerCode) return;
+  if (newUser.referredBy) return;
+  if (newUser.pendingReferralCode) return; // birinchi kelgan referal kodi saqlanadi
+  newUser.pendingReferralCode = referrerCode;
+  await newUser.save();
+}
+
+/**
+ * Foydalanuvchi obunani tasdiqlagandan (yoki keyingi safar botga kirganda)
+ * saqlangan pendingReferralCode bo'yicha referalni hisoblashga urinadi.
+ */
+async function tryRegisterPendingReferral(newUser) {
+  if (!newUser.pendingReferralCode || newUser.referredBy) return { counted: false, reason: 'no_pending' };
+  const result = await registerReferral(newUser.pendingReferralCode, newUser);
+  if (result.counted || result.reason !== 'referrer_not_found') {
+    // Muvaffaqiyatli hisoblandi yoki qayta urinishga hojat yo'q sabab - pending kodni tozalaymiz
+    newUser.pendingReferralCode = null;
+    await newUser.save();
+  }
+  return result;
+}
+
 async function getReferralInfo(telegramId, botUsername) {
   const user = await User.findOne({ telegramId });
   if (!user) return null;
@@ -67,6 +95,8 @@ async function getTopReferrers(limit = 10) {
 
 module.exports = {
   registerReferral,
+  savePendingReferral,
+  tryRegisterPendingReferral,
   getReferralInfo,
   getTopReferrers,
 };
