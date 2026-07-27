@@ -109,10 +109,11 @@ const auctionSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
     description: { type: String, default: '' },
-    potRwcoin: { type: Number, required: true }, // g'olibga qo'shimcha beriladigan RWcoin miqdori
+    potRwcoin: { type: Number, default: 0 }, // ESKI MODEL QOLDIG'I - endi ishlatilmaydi (bank/90% modeli)
     minBid: { type: Number, required: true, default: 10 },
     currentBid: { type: Number, default: 0 },
     currentBidderId: { type: Number, default: null },
+    bank: { type: Number, default: 0 }, // barcha garovlar yig'indisi - g'olib bo'lmasa qaytarilmaydi
     bidsCount: { type: Number, default: 0 }, // jami qo'yilgan garovlar soni
     channelMessageId: { type: Number, default: null }, // kanaldagi jonli e'lon xabari ID
     status: { type: String, enum: ['active', 'ended', 'cancelled'], default: 'active' },
