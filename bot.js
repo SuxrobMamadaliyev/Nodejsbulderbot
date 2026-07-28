@@ -2,7 +2,7 @@ const { Telegraf } = require('telegraf');
 const config = require('./config');
 const logger = require('./logger');
 
-const { mainMenuInline, backToMainMenuInline, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
+const { backToMainMenuInline, adminMenu, botListInline, botManageInline, referralShareInline, auctionListInline, auctionDetailInline, channelAuctionInline, auctionInactiveInline } = require('./buttons');
 const { getTemplateList } = require('./templates');
 const { findOrCreateUser, getRwcoin } = require('./users');
 const { extractReferralCode, getFullName, escapeHtml } = require('./functions');
@@ -25,6 +25,7 @@ const {
 
 const builder = require('./builder');
 const admin = require('./admin');
+const { sendMainMenu } = require('./menu');
 const { getState, clearState, setState } = require('./states');
 
 const bot = new Telegraf(config.botToken);
@@ -43,6 +44,8 @@ async function notifyReferralGranted(ctx, result) {
     }
   }
 }
+
+
 
 bot.catch((err, ctx) => {
   logger.error({ err: err.message, stack: err.stack }, 'Master bot xatoligi');
@@ -81,12 +84,12 @@ bot.start(async (ctx) => {
     }
   }
 
-  await ctx.reply(
+  await sendMainMenu(
+    ctx,
     `👋 Xush kelibsiz, ${ctx.from.first_name}!\n\n` +
       `Bu yerda siz o'z Telegram botingizni RWcoin evaziga yaratishingiz mumkin.\n` +
       `RWcoinni referal orqali yig'ing yoki auksionda ko'paytiring!\n` +
-      `Boshlash uchun quyidagi menyudan foydalaning 👇`,
-    mainMenuInline(await isAdminUser(ctx.from.id))
+      `Boshlash uchun quyidagi menyudan foydalaning 👇`
   );
 });
 
@@ -106,7 +109,7 @@ bot.action('check_subscription', async (ctx) => {
     const result = await tryRegisterPendingReferral(user);
     await notifyReferralGranted(ctx, result);
 
-    await ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id)));
+    await sendMainMenu(ctx, 'Asosiy menyu:');
   } else {
     await ctx.answerCbQuery('❌ Siz hali barcha kanallarga obuna bo\'lmadingiz.', { show_alert: true });
   }
@@ -114,7 +117,6 @@ bot.action('check_subscription', async (ctx) => {
 
 // ===================== ASOSIY MENYU =====================
 
-bot.hears('🤖 Bot yaratish', builder.startBotCreation);
 bot.action('menu_create_bot', async (ctx) => {
   await ctx.answerCbQuery();
   return builder.startBotCreation(ctx);
@@ -197,19 +199,9 @@ bot.action('menu_profile', async (ctx) => {
 });
 
 // ===================== RWCOIN =====================
-
-bot.hears('💰 RWcoin', async (ctx) => {
-  const rwcoin = await getRwcoin(ctx.from.id);
-  const me = await ctx.telegram.getMe();
-  const info = await getReferralInfo(ctx.from.id, me.username);
-  await ctx.reply(
-    `🪙 RWcoin balansingiz: ${rwcoin}\n\n` +
-      `👥 Har bir referal uchun: ${info ? info.rwcoinPerReferral : '-'} RWcoin olasiz.\n` +
-      `🤖 Botlar faqat RWcoin evaziga sotib olinadi - har bir bot turining o'z narxi bor ("🤖 Bot yaratish" bo'limida ko'rasiz).\n` +
-      `🏆 RWcoiningizni ko'paytirish uchun "🏆 Auksion" bo'limiga o'ting!`,
-    info ? referralShareInline(info.link, '🪙 RWcoin yig\'ish uchun shu havoladan foydalaning!') : undefined
-  );
-});
+// Eslatma: "💰 RWcoin" tugmasi asosiy menyudan olib tashlangan (balans
+// endi "📊 Profil" bo'limida ko'rsatiladi), shuning uchun bu yerda alohida
+// matnli handler qoldirilmadi.
 
 // ===================== AUKSION =====================
 
@@ -443,10 +435,10 @@ bot.action('menu_admin', adminOnlyMiddleware(), async (ctx) => {
   return admin.openAdminPanel(ctx);
 });
 
-bot.hears('⬅️ Asosiy menyu', async (ctx) => ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id))));
+bot.hears('⬅️ Asosiy menyu', async (ctx) => sendMainMenu(ctx, 'Asosiy menyu:'));
 bot.action('menu_back', async (ctx) => {
   await ctx.answerCbQuery();
-  return ctx.reply('Asosiy menyu:', mainMenuInline(await isAdminUser(ctx.from.id)));
+  return sendMainMenu(ctx, 'Asosiy menyu:');
 });
 
 bot.hears('👥 Foydalanuvchilar', adminOnlyMiddleware(), async (ctx) => admin.showUsers(ctx, 1));
@@ -473,6 +465,9 @@ bot.hears('🧩 Shablon yuklash', adminOnlyMiddleware(), admin.showTemplateUploa
 bot.hears('💵 Shablon narxlari', adminOnlyMiddleware(), admin.showTemplatePrices);
 bot.hears('🏆 Auksion yaratish', adminOnlyMiddleware(), admin.startAuctionCreation);
 bot.hears('💰 RWcoin sozlamalari', adminOnlyMiddleware(), admin.showRwcoinSettings);
+bot.hears('🖼 Asosiy menyu rasmi', adminOnlyMiddleware(), admin.showMainMenuImageSettings);
+bot.action('mmimg_set', adminOnlyMiddleware(), admin.startSetMainMenuImage);
+bot.action('mmimg_clear', adminOnlyMiddleware(), admin.clearMainMenuImageAction);
 
 bot.action(/setprice_(.+)/, adminOnlyMiddleware(), (ctx) => admin.promptTemplatePrice(ctx, ctx.match[1]));
 
@@ -542,7 +537,7 @@ bot.on('text', async (ctx, next) => {
     const text = (ctx.message.text || '').trim();
     if (text === '❌ Bekor qilish') {
       clearState(AUCTION_SCOPE, ctx.from.id);
-      await ctx.reply('❌ Bekor qilindi.', mainMenuInline(await isAdminUser(ctx.from.id)));
+      await sendMainMenu(ctx, '❌ Bekor qilindi.');
       return;
     }
     const amount = parseInt(text, 10);
@@ -610,7 +605,7 @@ bot.on('text', async (ctx, next) => {
     const text = (ctx.message.text || '').trim();
     if (text === '❌ Bekor qilish') {
       clearState(USER_AUCTION_SCOPE, ctx.from.id);
-      await ctx.reply('❌ Bekor qilindi.', mainMenuInline(await isAdminUser(ctx.from.id)));
+      await sendMainMenu(ctx, '❌ Bekor qilindi.');
       return;
     }
     const garov = parseInt(text, 10);
@@ -629,15 +624,15 @@ bot.on('text', async (ctx, next) => {
         startBid: garov,
         createdByName: getFullName(ctx.from),
       });
-      await ctx.reply(
+      await sendMainMenu(
+        ctx,
         `✅ Auksioningiz boshlandi!\n\n⭐ Garov: ${garov} RWcoin\n⏱ Boshlang'ich vaqt: ${BID_EXTENSION_MINUTES} daqiqa (har garovdan so'ng yana shuncha uzayadi)\n\n` +
-          `${config.auctionChannelId ? 'Auksion kanalga e\'lon qilindi.' : 'Auksion "🏆 Auksion" bo\'limida ko\'rinadi.'}`,
-        mainMenuInline(await isAdminUser(ctx.from.id))
+          `${config.auctionChannelId ? 'Auksion kanalga e\'lon qilindi.' : 'Auksion "🏆 Auksion" bo\'limida ko\'rinadi.'}`
       );
       await postAuctionToChannel(ctx, auction);
     } catch (err) {
       logger.warn({ err: err.message }, 'Foydalanuvchi auksionini yaratishda xatolik');
-      await ctx.reply('❌ RWcoiningiz yetarli emas yoki xatolik yuz berdi.', mainMenuInline(await isAdminUser(ctx.from.id)));
+      await sendMainMenu(ctx, '❌ RWcoiningiz yetarli emas yoki xatolik yuz berdi.');
     }
     return;
   }
@@ -666,6 +661,15 @@ bot.on(['photo', 'video', 'audio', 'voice', 'animation', 'sticker', 'document'],
   const adminState = getState(admin.SCOPE, ctx.from.id);
   if (adminState && adminState.step === 'awaiting_broadcast_content' && (await isAdminUser(ctx.from.id))) {
     return admin.handleBroadcastContent(ctx);
+  }
+  return next();
+});
+
+// Asosiy menyu uchun rasm yuklash
+bot.on('photo', async (ctx, next) => {
+  const adminState = getState(admin.SCOPE, ctx.from.id);
+  if (adminState && adminState.step === 'awaiting_mainmenu_image' && (await isAdminUser(ctx.from.id))) {
+    return admin.handleMainMenuImageUpload(ctx);
   }
   return next();
 });
