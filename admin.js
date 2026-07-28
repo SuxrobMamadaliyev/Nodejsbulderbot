@@ -12,13 +12,17 @@ const { formatDate } = require('./functions');
 const { registerCustomTemplateFromCode, getTemplateList, setTemplatePrice } = require('./templates');
 const { createAuction, cancelAuction, getActiveAuctions } = require('./auction');
 const logger = require('./logger');
+const { pe } = require('./premiumEmoji');
 
 const MAX_TEMPLATE_FILE_SIZE = 512 * 1024; // 512 KB
 
 const SCOPE = 'admin';
 
 async function openAdminPanel(ctx) {
-  return ctx.reply('⚙️ Admin panelga xush kelibsiz.', adminMenu);
+  return ctx.reply(`${pe('settings')} Admin panelga xush kelibsiz.`, {
+    parse_mode: 'HTML',
+    ...adminMenu,
+  });
 }
 
 // ===================== FOYDALANUVCHILAR =====================
