@@ -1,9 +1,9 @@
 const { Bot, Channel, Log, Admin } = require('./database');
 const { setState, getState, updateStateData, clearState } = require('./states');
-const { adminMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline, channelListInline, paginationInline } = require('./buttons');
+const { adminMenu, cancelKeyboard, botListInline, botManageInline, confirmInline, templatePriceListInline, channelListInline, paginationInline, mainMenuImageAdminInline } = require('./buttons');
 const { getUsersPaginated, searchUser, blockUser, unblockUser } = require('./users');
 const { addChannel, removeChannel, listChannels, resolveChannelChatId } = require('./subscription');
-const { getRwcoinPerReferral, setRwcoinPerReferral } = require('./settings');
+const { getRwcoinPerReferral, setRwcoinPerReferral, getMainMenuImage, setMainMenuImage, clearMainMenuImage } = require('./settings');
 const { getOverallStatistics, formatOverallStatistics } = require('./statistics');
 const { buildPayloadFromMessage, runBroadcast } = require('./broadcast');
 const { startBot, stopBot, restartBot, deleteBot, getBotInfo } = require('./botmanager');
@@ -227,6 +227,45 @@ async function handleRwcoinPerReferralInput(ctx) {
   await setRwcoinPerReferral(num);
   clearState(SCOPE, ctx.from.id);
   await ctx.reply(`✅ Har bir referal uchun endi ${num} RWcoin beriladi.`, adminMenu);
+}
+
+// ===================== ASOSIY MENYU RASMI =====================
+
+async function showMainMenuImageSettings(ctx) {
+  const imageId = await getMainMenuImage();
+  const text =
+    '🖼 Asosiy menyu rasmi\n\n' +
+    (imageId
+      ? 'Hozir asosiy menyu xabari rasm bilan yuborilmoqda.'
+      : 'Hozircha asosiy menyu uchun rasm o\'rnatilmagan (faqat matn ko\'rinishida yuboriladi).');
+  if (imageId) {
+    await ctx.replyWithPhoto(imageId, { caption: text, ...mainMenuImageAdminInline(true) });
+  } else {
+    await ctx.reply(text, mainMenuImageAdminInline(false));
+  }
+}
+
+async function startSetMainMenuImage(ctx) {
+  setState(SCOPE, ctx.from.id, 'awaiting_mainmenu_image', {});
+  await ctx.answerCbQuery();
+  await ctx.reply('🖼 Asosiy menyu uchun rasm yuboring (surat sifatida, fayl emas):', cancelKeyboard);
+}
+
+async function handleMainMenuImageUpload(ctx) {
+  const photo = ctx.message.photo;
+  if (!photo || !photo.length) {
+    return ctx.reply('❌ Iltimos, rasmni surat (photo) sifatida yuboring.');
+  }
+  const fileId = photo[photo.length - 1].file_id; // eng yuqori sifatli versiyasi
+  await setMainMenuImage(fileId);
+  clearState(SCOPE, ctx.from.id);
+  await ctx.reply('✅ Asosiy menyu rasmi o\'rnatildi! Endi barcha foydalanuvchilarga asosiy menyu shu rasm bilan ko\'rinadi.', adminMenu);
+}
+
+async function clearMainMenuImageAction(ctx) {
+  await clearMainMenuImage();
+  await ctx.answerCbQuery('✅ Rasm o\'chirildi');
+  await ctx.reply('🗑 Asosiy menyu rasmi o\'chirildi. Endi menyu faqat matn ko\'rinishida yuboriladi.', adminMenu);
 }
 
 // ===================== SHABLON NARXLARI (ADMIN) =====================
@@ -458,6 +497,10 @@ module.exports = {
   executeBroadcast,
   showRwcoinSettings,
   handleRwcoinPerReferralInput,
+  showMainMenuImageSettings,
+  startSetMainMenuImage,
+  handleMainMenuImageUpload,
+  clearMainMenuImageAction,
   showTemplatePrices,
   promptTemplatePrice,
   handleTemplatePriceInput,
