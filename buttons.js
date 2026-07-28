@@ -2,24 +2,30 @@ const { Markup } = require('telegraf');
 
 // Asosiy menyu - inline tugmalar ko'rinishida.
 // isAdmin=true bo'lsa, pastiga "👨‍💻 Admin panel" tugmasi ham qo'shiladi.
+// Bot API 9.4 (2026-02-09) "style" maydonini qo'llab-quvvatlaydi:
+// "success" (yashil), "primary" (ko'k), "danger" (qizil).
+function styledCb(text, data, style) {
+  return { ...Markup.button.callback(text, data), style };
+}
+
 function mainMenuInline(isAdmin = false) {
   const rows = [
-    [Markup.button.callback('🏆 Auksion', 'menu_auction')],
+    [styledCb('🏆 Auksion', 'menu_auction', 'success')],
     [
-      Markup.button.callback('🤖 Bot yaratish', 'menu_create_bot'),
-      Markup.button.callback('📂 Mening botlarim', 'menu_my_bots'),
+      styledCb('🤖 Bot yaratish', 'menu_create_bot', 'primary'),
+      styledCb('📂 Mening botlarim', 'menu_my_bots', 'primary'),
     ],
     [
-      Markup.button.callback('👥 Referallar', 'menu_referrals'),
-      Markup.button.callback('📊 Profil', 'menu_profile'),
+      styledCb('👥 Referallar', 'menu_referrals', 'success'),
+      styledCb('📊 Profil', 'menu_profile', 'primary'),
     ],
     [
-      Markup.button.callback('⚙️ Sozlamalar', 'menu_settings'),
-      Markup.button.callback('🆘 Yordam', 'menu_help'),
+      styledCb('⚙️ Sozlamalar', 'menu_settings', 'primary'),
+      styledCb('🆘 Yordam', 'menu_help', 'primary'),
     ],
   ];
   if (isAdmin) {
-    rows.push([Markup.button.callback('👨‍💻 Admin panel', 'menu_admin')]);
+    rows.push([styledCb('👨‍💻 Admin panel', 'menu_admin', 'danger')]);
   }
   return Markup.inlineKeyboard(rows);
 }
@@ -29,13 +35,22 @@ function backToMainMenuInline() {
   return Markup.inlineKeyboard([[Markup.button.callback('⬅️ Asosiy menyu', 'menu_back')]]);
 }
 
+function mainMenuImageAdminInline(hasImage) {
+  const rows = [[{ ...Markup.button.callback('🖼 Rasm qo\'yish / almashtirish', 'mmimg_set'), style: 'primary' }]];
+  if (hasImage) {
+    rows.push([{ ...Markup.button.callback('🗑 Rasmni o\'chirish', 'mmimg_clear'), style: 'danger' }]);
+  }
+  return Markup.inlineKeyboard(rows);
+}
+
 const adminMenu = Markup.keyboard([
   ['👥 Foydalanuvchilar', '🤖 Botlar'],
   ['📢 Kanallar', '🔗 Referallar'],
   ['📤 Broadcast', '📊 Statistika'],
   ['🧩 Shablon yuklash', '💵 Shablon narxlari'],
   ['🏆 Auksion yaratish', '💰 RWcoin sozlamalari'],
-  ['📜 Loglar', '⬅️ Asosiy menyu'],
+  ['🖼 Asosiy menyu rasmi', '📜 Loglar'],
+  ['⬅️ Asosiy menyu'],
 ]).resize();
 
 const cancelKeyboard = Markup.keyboard([['❌ Bekor qilish']]).resize();
@@ -181,6 +196,7 @@ function paginationInline(prefix, page, totalPages) {
 module.exports = {
   mainMenuInline,
   backToMainMenuInline,
+  mainMenuImageAdminInline,
   adminMenu,
   cancelKeyboard,
   backKeyboard,
