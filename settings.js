@@ -21,6 +21,18 @@ async function setSetting(key, value) {
   return value;
 }
 
+async function getMainMenuImage() {
+  return getSetting('main_menu_image', null);
+}
+
+async function setMainMenuImage(fileId) {
+  return setSetting('main_menu_image', fileId);
+}
+
+async function clearMainMenuImage() {
+  return setSetting('main_menu_image', null);
+}
+
 async function getRwcoinPerReferral() {
   const value = await getSetting('rwcoin_per_referral', config.defaultRwcoinPerReferral);
   return Number(value) || config.defaultRwcoinPerReferral;
@@ -35,4 +47,7 @@ module.exports = {
   setSetting,
   getRwcoinPerReferral,
   setRwcoinPerReferral,
+  getMainMenuImage,
+  setMainMenuImage,
+  clearMainMenuImage,
 };
