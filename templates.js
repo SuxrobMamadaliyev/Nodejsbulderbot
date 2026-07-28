@@ -6,6 +6,8 @@ const { checkUserSubscription } = require('./subscription');
 const { subscriptionCheckInline } = require('./buttons');
 const config = require('./config');
 const logger = require('./logger');
+const { pe } = require('./premiumEmoji');
+const HTML = { parse_mode: 'HTML' };
 
 const CUSTOM_TEMPLATES_DIR = path.join(__dirname, 'custom_templates');
 if (!fs.existsSync(CUSTOM_TEMPLATES_DIR)) {
@@ -22,7 +24,7 @@ const TEMPLATES = {
     name: 'Blank',
     description: "Bo'sh shablon, hech qanday tayyor funksiya yo'q",
     register(bot) {
-      bot.start((ctx) => ctx.reply('👋 Salom! Bu bot hali sozlanmagan.'));
+      bot.start((ctx) => ctx.reply(`${pe('wave')} Salom! Bu bot hali sozlanmagan.`, HTML));
     },
   },
 
@@ -40,8 +42,8 @@ const TEMPLATES = {
         const { isSubscribed, notSubscribed } = await checkUserSubscription(ctx.telegram, userId, channels);
         if (!isSubscribed) {
           await ctx.reply(
-            '⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo\'ling:',
-            subscriptionCheckInline(notSubscribed, 'tpl_check_subscription')
+            `${pe('warning')} Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:`,
+            { ...HTML, ...subscriptionCheckInline(notSubscribed, 'tpl_check_subscription') }
           );
           return;
         }
@@ -53,13 +55,13 @@ const TEMPLATES = {
         const { isSubscribed, notSubscribed } = await checkUserSubscription(ctx.telegram, ctx.from.id, channels);
         if (isSubscribed) {
           await ctx.answerCbQuery('✅ Obuna tasdiqlandi!');
-          await ctx.reply('✅ Obuna tasdiqlandi! Botdan foydalanishingiz mumkin.');
+          await ctx.reply(`${pe('checkmark')} Obuna tasdiqlandi! Botdan foydalanishingiz mumkin.`, HTML);
         } else {
           await ctx.answerCbQuery('❌ Siz hali barcha kanallarga obuna bo\'lmadingiz.', { show_alert: true });
         }
       });
 
-      bot.start((ctx) => ctx.reply('👋 Xush kelibsiz! Siz endi botdan to\'liq foydalana olasiz.'));
+      bot.start((ctx) => ctx.reply(`${pe('wave')} Xush kelibsiz! Siz endi botdan to'liq foydalana olasiz.`, HTML));
     },
   },
 
@@ -68,7 +70,7 @@ const TEMPLATES = {
     name: 'Auto Reply',
     description: 'Kalit so\'zga qarab avtomatik javob beradi',
     register(bot, botDoc) {
-      bot.start((ctx) => ctx.reply('👋 Salom! Menga xabar yozing, avtomatik javob beraman.'));
+      bot.start((ctx) => ctx.reply(`${pe('wave')} Salom! Menga xabar yozing, avtomatik javob beraman.`, HTML));
       bot.on('text', async (ctx) => {
         const rules = botDoc.settings?.autoReplyRules || [];
         const text = ctx.message.text.toLowerCase();
@@ -76,7 +78,7 @@ const TEMPLATES = {
         if (rule) {
           await ctx.reply(rule.response);
         } else {
-          await ctx.reply('🤖 Sizga tez orada javob beramiz.');
+          await ctx.reply(`${pe('robot')} Sizga tez orada javob beramiz.`, HTML);
         }
       });
     },
@@ -87,7 +89,7 @@ const TEMPLATES = {
     name: 'Auto Forward',
     description: 'Kelgan xabarlarni admin(lar)ga forward qiladi',
     register(bot, botDoc) {
-      bot.start((ctx) => ctx.reply('👋 Salom! Xabaringizni yuboring, u administratorga yetkaziladi.'));
+      bot.start((ctx) => ctx.reply(`${pe('wave')} Salom! Xabaringizni yuboring, u administratorga yetkaziladi.`, HTML));
       bot.on('message', async (ctx) => {
         const targets = botDoc.settings?.forwardTargets || [botDoc.ownerId];
         for (const targetId of targets) {
@@ -110,17 +112,17 @@ const TEMPLATES = {
       bot.start((ctx) => {
         const products = botDoc.settings?.products || [];
         if (!products.length) {
-          return ctx.reply('🛒 Do\'kon hali bo\'sh. Admin mahsulot qo\'shishi kerak.');
+          return ctx.reply(`${pe('wallet')} Do'kon hali bo'sh. Admin mahsulot qo'shishi kerak.`, HTML);
         }
         const buttons = products.map((p) => [Markup.button.callback(`${p.name} - ${p.price}`, `product_${p.id}`)]);
-        return ctx.reply('🛒 Mahsulotlar ro\'yxati:', Markup.inlineKeyboard(buttons));
+        return ctx.reply(`${pe('wallet')} Mahsulotlar ro'yxati:`, { ...HTML, ...Markup.inlineKeyboard(buttons) });
       });
       bot.action(/product_(.+)/, async (ctx) => {
         const products = botDoc.settings?.products || [];
         const product = products.find((p) => String(p.id) === ctx.match[1]);
         if (!product) return ctx.answerCbQuery('Mahsulot topilmadi');
         await ctx.answerCbQuery();
-        await ctx.reply(`📦 ${product.name}\n💰 Narxi: ${product.price}\n📝 ${product.description || ''}`);
+        await ctx.reply(`📦 ${product.name}\n${pe('dollar')} Narxi: ${product.price}\n📝 ${product.description || ''}`, HTML);
       });
     },
   },
@@ -130,15 +132,15 @@ const TEMPLATES = {
     name: 'Lottery',
     description: 'Ishtirokchilarni ro\'yxatga oluvchi oddiy lotereya boti',
     register(bot, botDoc) {
-      bot.start((ctx) => ctx.reply('🎟 Lotereyada ishtirok etish uchun /join buyrug\'ini yuboring.'));
+      bot.start((ctx) => ctx.reply(`${pe('trophy')} Lotereyada ishtirok etish uchun /join buyrug'ini yuboring.`, HTML));
       bot.command('join', async (ctx) => {
         botDoc.settings.participants = botDoc.settings.participants || [];
         const already = botDoc.settings.participants.find((p) => p.id === ctx.from.id);
-        if (already) return ctx.reply('✅ Siz allaqachon ishtirokchisiz!');
+        if (already) return ctx.reply(`${pe('checkmark')} Siz allaqachon ishtirokchisiz!`, HTML);
         botDoc.settings.participants.push({ id: ctx.from.id, username: ctx.from.username || null });
         botDoc.markModified('settings');
         await botDoc.save();
-        await ctx.reply('🎉 Siz lotereyaga muvaffaqiyatli qo\'shildingiz!');
+        await ctx.reply(`${pe('fire')} Siz lotereyaga muvaffaqiyatli qo'shildingiz!`, HTML);
       });
     },
   },
@@ -148,7 +150,7 @@ const TEMPLATES = {
     name: 'Support',
     description: 'Foydalanuvchi va admin o\'rtasida murojaat boti',
     register(bot, botDoc) {
-      bot.start((ctx) => ctx.reply('🆘 Savolingizni yozing, tez orada javob beramiz.'));
+      bot.start((ctx) => ctx.reply(`${pe('bell')} Savolingizni yozing, tez orada javob beramiz.`, HTML));
       bot.on('message', async (ctx) => {
         if (ctx.from.id === botDoc.ownerId) {
           if (ctx.message.reply_to_message) {
@@ -165,7 +167,7 @@ const TEMPLATES = {
         botDoc.settings.ticketMap[sent.message_id] = ctx.from.id;
         botDoc.markModified('settings');
         await botDoc.save();
-        await ctx.reply('✅ Xabaringiz qabul qilindi, tez orada javob beramiz.');
+        await ctx.reply(`${pe('checkmark')} Xabaringiz qabul qilindi, tez orada javob beramiz.`, HTML);
       });
     },
   },
