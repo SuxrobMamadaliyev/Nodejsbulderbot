@@ -27,6 +27,7 @@ const builder = require('./builder');
 const admin = require('./admin');
 const { sendMainMenu } = require('./menu');
 const { getState, clearState, setState } = require('./states');
+const { pe } = require('./premiumEmoji');
 
 const bot = new Telegraf(config.botToken);
 
@@ -86,7 +87,7 @@ bot.start(async (ctx) => {
 
   await sendMainMenu(
     ctx,
-    `👋 Xush kelibsiz, ${ctx.from.first_name}!\n\n` +
+    `${pe('wave')} Xush kelibsiz, ${ctx.from.first_name}!\n\n` +
       `Bu yerda siz o'z Telegram botingizni RWcoin evaziga yaratishingiz mumkin.\n` +
       `RWcoinni referal orqali yig'ing yoki auksionda ko'paytiring!\n` +
       `Boshlash uchun quyidagi menyudan foydalaning 👇`
